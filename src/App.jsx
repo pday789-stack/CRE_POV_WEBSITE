@@ -161,6 +161,128 @@ const SpacebarIcon = ({ size = 24, className = '' }) => (
   </svg>
 );
 
+const HEADER_MENUS = [
+  {
+    key: 'explanation',
+    label: 'Explanation',
+    align: 'left',
+    sections: [
+      {
+        title: null,
+        links: [
+          { label: 'What', href: '#what' },
+          { label: 'Who', href: '#who' },
+          { label: 'Where', href: '#where' },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'resources',
+    label: 'Resources',
+    align: 'left',
+    sections: [
+      {
+        title: 'For Owners',
+        links: [
+          { label: 'Retail Services', href: '#' },
+        ],
+      },
+      {
+        title: 'For Brokers',
+        links: [
+          { label: 'Spreadsheet Templates', href: '#' },
+          { label: 'AI Prompt Templates', href: '#' },
+        ],
+      },
+    ],
+  },
+  {
+    key: 'contact',
+    label: 'Contact',
+    align: 'right',
+    sections: [
+      {
+        title: null,
+        links: [
+          { label: 'Email Us', href: 'mailto:crepovbot@gmail.com' },
+        ],
+      },
+      {
+        title: 'Story to tell?',
+        links: [
+          { label: 'Requirements', href: '#' },
+          { label: 'Questionnaire', href: '#' },
+        ],
+      },
+    ],
+  },
+];
+
+const HeaderMenu = ({ menu, isOpen, onOpen, onToggle, onClose }) => {
+  const panelAlignment = menu.align === 'right' ? 'right-0 origin-top-right' : 'left-0 origin-top-left';
+
+  return (
+    <div
+      className="relative"
+      onMouseEnter={() => onOpen(menu.key)}
+      onMouseLeave={onClose}
+    >
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={isOpen}
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle(menu.key);
+        }}
+        className={`flex h-9 items-center gap-2 rounded-full border px-3 md:px-4 text-[11px] md:text-[12px] uppercase tracking-[0.18em] transition-all duration-200 ${
+          isOpen
+            ? 'border-white/18 bg-white/10 text-white shadow-[0_10px_24px_rgba(0,0,0,0.18)]'
+            : 'border-transparent bg-transparent text-white/84 hover:border-white/10 hover:bg-white/[0.06] hover:text-white'
+        }`}
+      >
+        <span>{menu.label}</span>
+        <span className={`transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}>
+          <ChevronDownIcon size={12} />
+        </span>
+      </button>
+
+      <div
+        className={`absolute top-full ${panelAlignment} mt-2 w-[min(88vw,248px)] rounded-2xl border border-white/12 bg-[#171a21]/96 p-2 shadow-[0_20px_50px_rgba(0,0,0,0.45)] transition-all duration-200 ${
+          isOpen ? 'visible translate-y-0 opacity-100' : 'pointer-events-none invisible -translate-y-1 opacity-0'
+        }`}
+      >
+        {menu.sections.map((section, sectionIndex) => (
+          <div
+            key={`${menu.key}-${section.title ?? sectionIndex}`}
+            className={sectionIndex === 0 ? '' : 'mt-2 border-t border-white/8 pt-2'}
+          >
+            {section.title ? (
+              <div className="px-3 pb-1 text-[9px] uppercase tracking-[0.28em] text-white/42">
+                {section.title}
+              </div>
+            ) : null}
+
+            <div className="flex flex-col gap-1">
+              {section.links.map((link) => (
+                <a
+                  key={`${menu.key}-${link.label}`}
+                  href={link.href}
+                  onClick={onClose}
+                  className="rounded-xl px-3 py-2.5 text-[11px] uppercase tracking-[0.16em] text-white/88 transition-colors duration-150 hover:bg-white/[0.07] hover:text-white"
+                >
+                  {link.label}
+                </a>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 // --- OCTAHEDRON SCENE COMPONENT (SECTION 3) ---
 const OctahedronScene = () => {
   const mountRef = useRef(null);
@@ -180,7 +302,7 @@ const OctahedronScene = () => {
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 
     const currentMount = mountRef.current;
     currentMount.appendChild(renderer.domElement);
@@ -323,6 +445,7 @@ const OctahedronScene = () => {
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     };
     window.addEventListener('resize', handleResize);
 
@@ -352,11 +475,11 @@ const ChessTreadmill = ({ headerHeight }) => {
   const headerHeightRef = useRef(headerHeight);
 
   const headingRef = useRef(null);
-  const hintRef = useRef(null);
-  const hintPiecesRef = useRef(null);
 
   const [pieceInfo, setPieceInfo] = useState(() => createEmptyPieceInfo());
   const [isRiskTheme, setIsRiskTheme] = useState(false);
+  const [showHintPrompts, setShowHintPrompts] = useState(true);
+  const hintVisibilityRef = useRef(true);
 
   useEffect(() => {
     headerHeightRef.current = headerHeight;
@@ -377,6 +500,8 @@ const ChessTreadmill = ({ headerHeight }) => {
     let riskPieceNodes = {};
     let frameId;
     let disposed = false;
+    let isVisible = false;
+    let isAnimating = false;
 
     const COLOR_WHITE = 0xf3f2ee;
     const COLOR_BURGUNDY = 0x97182e;
@@ -397,33 +522,32 @@ const ChessTreadmill = ({ headerHeight }) => {
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.88;
 
     const currentMount = mountRef.current;
     currentMount.appendChild(renderer.domElement);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.58));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.1);
-    dirLight.position.set(18, 30, 14);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.26));
+    const dirLight = new THREE.DirectionalLight(0xf7f1e6, 0.72);
+    dirLight.position.set(14, 24, 8);
     dirLight.castShadow = true;
     dirLight.shadow.mapSize.set(2048, 2048);
     scene.add(dirLight);
 
-    const centerSpotLight = new THREE.SpotLight(0xffffff, 2.7, 85, Math.PI / 5, 0.42, 1.15);
-    centerSpotLight.position.set(0, 22, 4);
+    const centerSpotLight = new THREE.SpotLight(0xfff5eb, 0.85, 36, Math.PI / 8.8, 0.58, 1.7);
+    centerSpotLight.position.set(2.8, 14, 5.8);
     centerSpotLight.castShadow = true;
     centerSpotLight.shadow.mapSize.set(1024, 1024);
     centerSpotLight.target.position.set(0, 0, 0);
     scene.add(centerSpotLight);
     scene.add(centerSpotLight.target);
 
-    const centerFillLight = new THREE.PointLight(0xffefdc, 1.5, 65, 2);
-    centerFillLight.position.set(0, 11, 8);
-    scene.add(centerFillLight);
-
-    const rimLight = new THREE.DirectionalLight(0xb7d4ff, 0.55);
-    rimLight.position.set(-16, 14, -10);
+    const rimLight = new THREE.DirectionalLight(0xb7d4ff, 0.28);
+    rimLight.position.set(-18, 12, -12);
     scene.add(rimLight);
 
     const loader = new GLTFLoader();
@@ -472,7 +596,9 @@ const ChessTreadmill = ({ headerHeight }) => {
       return focus * focus * (3 - 2 * focus);
     }
 
-    const centerHighlightColor = new THREE.Color(0xffffff);
+    const centerHighlightColor = new THREE.Color(0xfff6ee);
+    const spotlightWorldTarget = new THREE.Vector3();
+    const spotlightWorldPosition = new THREE.Vector3();
 
     function createChessRoad() {
       const widthTiles = 5;
@@ -581,6 +707,7 @@ const ChessTreadmill = ({ headerHeight }) => {
       pieceGroup.userData = {
         ...pieceGroup.userData,
         pieceType,
+        visualHeight: (PIECE_HEIGHTS[pieceType] ?? 4) * PIECE_SCALE_MULTIPLIER,
         themeMix: currentMode === 'risk' ? 1 : 0,
         targetThemeMix: currentMode === 'risk' ? 1 : 0,
       };
@@ -645,7 +772,12 @@ const ChessTreadmill = ({ headerHeight }) => {
         redSub: '[HARSH MARKET]',
       }));
 
-      const pawnBoxOffset = 4.6;
+      const pawnOffsets = [
+        [-2.35, -3.8],
+        [2.35, -3.8],
+        [-2.35, 3.8],
+        [2.35, 3.8],
+      ];
       const pawnData = buildPieceUiData('pawn', {
         whiteHeading: 'TIMING',
         redHeading: 'TIMING',
@@ -653,12 +785,7 @@ const ChessTreadmill = ({ headerHeight }) => {
         redSub: '[via pawn differential]\nMore pressure to sell',
       });
 
-      [
-        [-pawnBoxOffset, -pawnBoxOffset],
-        [pawnBoxOffset, -pawnBoxOffset],
-        [-pawnBoxOffset, pawnBoxOffset],
-        [pawnBoxOffset, pawnBoxOffset],
-      ].forEach(([offsetX, offsetZ]) => {
+      pawnOffsets.forEach(([offsetX, offsetZ]) => {
         placePiece('pawn', queenX + offsetX, queenZ + offsetZ, pawnData);
       });
     }
@@ -693,8 +820,11 @@ const ChessTreadmill = ({ headerHeight }) => {
         headingRef.current.style.color = currentMode === 'owner' ? '#F3F2EE' : '#97182E';
       }
 
-      if (hintRef.current) hintRef.current.style.opacity = msIndex === 2 ? '0' : '0.8';
-      if (hintPiecesRef.current) hintPiecesRef.current.style.opacity = msIndex === 2 ? '0' : '0.8';
+      const nextHintVisibility = msIndex !== 2;
+      if (hintVisibilityRef.current !== nextHintVisibility) {
+        hintVisibilityRef.current = nextHintVisibility;
+        setShowHintPrompts(nextHintVisibility);
+      }
     }
 
     const raycaster = new THREE.Raycaster();
@@ -815,6 +945,33 @@ const ChessTreadmill = ({ headerHeight }) => {
     window.addEventListener('scroll', handleScroll, { passive: true });
     handleScroll();
 
+    const startAnimation = () => {
+      if (!isAnimating && !disposed) {
+        isAnimating = true;
+        frameId = requestAnimationFrame(animate);
+      }
+    };
+
+    const visibilityObserver = new IntersectionObserver(
+      ([entry]) => {
+        isVisible = entry.isIntersecting;
+
+        if (isVisible) {
+          startAnimation();
+        } else if (isAnimating) {
+          cancelAnimationFrame(frameId);
+          isAnimating = false;
+        }
+      },
+      { threshold: 0.05 },
+    );
+
+    if (containerRef.current) {
+      visibilityObserver.observe(containerRef.current);
+      const rect = containerRef.current.getBoundingClientRect();
+      isVisible = rect.bottom > 0 && rect.top < window.innerHeight;
+    }
+
     Promise.all([loadGLTF(whiteChessPiecesGlb), loadGLTF(redChessPiecesGlb)])
       .then(([ownerGltf, riskGltf]) => {
         if (disposed) return;
@@ -836,6 +993,11 @@ const ChessTreadmill = ({ headerHeight }) => {
       });
 
     const animate = () => {
+      if (disposed || !isVisible) {
+        isAnimating = false;
+        return;
+      }
+
       const time = Date.now();
 
       scrollPos += (targetScrollPos - scrollPos) * 0.08;
@@ -877,10 +1039,13 @@ const ChessTreadmill = ({ headerHeight }) => {
         tile.material.opacity = fade * introState.p;
         if ('emissive' in tile.material && tile.material.emissive) {
           tile.material.emissive.copy(tile.userData.emissiveColor);
-          tile.material.emissiveIntensity = 0.05 + centerFocus * (tile.userData.isDark ? 0.36 : 0.24);
+          tile.material.emissiveIntensity = 0.015 + centerFocus * (tile.userData.isDark ? 0.05 : 0.035);
         }
         if (tile.children[0]) tile.children[0].material.opacity = (fade * introState.p) * 0.4;
       });
+
+      let featuredPiece = null;
+      let featuredStrength = 0;
 
       interactivePieces.forEach((piece) => {
         const currentX = piece.userData.logicalX - pathScroll;
@@ -904,6 +1069,11 @@ const ChessTreadmill = ({ headerHeight }) => {
         const targetScale = isFocused ? 1.2 : 1.0;
         piece.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.15);
 
+        if (centerFocus > featuredStrength) {
+          featuredStrength = centerFocus;
+          featuredPiece = piece;
+        }
+
         const fade = getUnifiedFade(currentX);
         piece.traverse((child) => {
           if (child.isMesh && child.userData.themeMaterials) {
@@ -912,11 +1082,11 @@ const ChessTreadmill = ({ headerHeight }) => {
               const themeMaterial = child.userData.themeMaterials[index] ?? child.userData.themeMaterials[0];
               if (material.color && themeMaterial) {
                 material.color.copy(themeMaterial.ownerColor).lerp(themeMaterial.riskColor, piece.userData.themeMix);
-                material.color.lerp(centerHighlightColor, centerFocus * 0.16);
+                material.color.lerp(centerHighlightColor, centerFocus * 0.06);
               }
               if ('emissive' in material && material.emissive) {
                 material.emissive.copy(material.color ?? centerHighlightColor);
-                material.emissiveIntensity = 0.08 + centerFocus * 0.55 + (isFocused ? 0.18 : 0);
+                material.emissiveIntensity = 0.015 + centerFocus * 0.17 + (isFocused ? 0.06 : 0);
               }
               material.opacity = fade * introState.p;
             });
@@ -924,10 +1094,28 @@ const ChessTreadmill = ({ headerHeight }) => {
         });
       });
 
+      if (featuredPiece) {
+        spotlightWorldTarget.copy(featuredPiece.position);
+        spotlightWorldTarget.y += featuredPiece.userData.visualHeight * 0.58;
+
+        spotlightWorldPosition.set(
+          featuredPiece.position.x + 3.1,
+          spotlightWorldTarget.y + 10.6,
+          featuredPiece.position.z + 5.9,
+        );
+
+        centerSpotLight.position.lerp(spotlightWorldPosition, 0.12);
+        centerSpotLight.target.position.lerp(spotlightWorldTarget, 0.18);
+        centerSpotLight.intensity += ((0.58 + featuredStrength * 1.65) - centerSpotLight.intensity) * 0.12;
+      } else {
+        centerSpotLight.intensity += (0.58 - centerSpotLight.intensity) * 0.12;
+      }
+      centerSpotLight.target.updateMatrixWorld();
+
       renderer.render(scene, camera);
       frameId = requestAnimationFrame(animate);
     };
-    animate();
+    if (isVisible) startAnimation();
 
     const handleResize = () => {
       const mount = mountRef.current;
@@ -936,6 +1124,7 @@ const ChessTreadmill = ({ headerHeight }) => {
       const h = mount.clientHeight;
       const newAspect = w / h;
       renderer.setSize(w, h);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
       camera.left = -d * newAspect;
       camera.right = d * newAspect;
       camera.top = d;
@@ -946,6 +1135,7 @@ const ChessTreadmill = ({ headerHeight }) => {
 
     return () => {
       disposed = true;
+      visibilityObserver.disconnect();
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('mousemove', onMouseMove);
@@ -974,6 +1164,9 @@ const ChessTreadmill = ({ headerHeight }) => {
   const activePieceHeading = isRiskTheme ? pieceInfo.redHeading : pieceInfo.whiteHeading;
   const activePieceSub = isRiskTheme ? pieceInfo.redSub : pieceInfo.whiteSub;
   const activePieceImage = isRiskTheme ? pieceInfo.redImageSrc : pieceInfo.whiteImageSrc;
+  const showPiecePreview = pieceInfo.active && Boolean(activePieceImage);
+  const showPieceText = pieceInfo.active && Boolean(activePieceHeading || activePieceSub);
+  const showHints = showHintPrompts && !pieceInfo.active;
 
   return (
     <div ref={containerRef} className="relative w-full h-[300vh] bg-[#222327]">
@@ -998,33 +1191,19 @@ const ChessTreadmill = ({ headerHeight }) => {
           </h2>
         </div>
 
-        <div className={`absolute bottom-20 left-10 z-20 transition-all duration-500 ease-out ${pieceInfo.active ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-8 scale-95 pointer-events-none'}`}>
-          <div className="relative w-[260px] aspect-[4/3] overflow-hidden rounded-xl border border-white/10 bg-[#222327]/85 backdrop-blur-md drop-shadow-[0_20px_30px_rgba(0,0,0,0.6)] shadow-[0_0_40px_rgba(0,0,0,0.3)]">
-            {activePieceImage ? (
-              <img
-                src={activePieceImage}
-                alt={`${activePieceHeading} pop-up window`}
-                className="h-full w-full object-contain bg-[#1a1b1f] transition-opacity duration-500 ease-out"
-              />
-            ) : (
-              <div className="flex h-full w-full flex-col items-center justify-center border-2 border-dashed border-gray-500/50">
-                <span className="text-gray-400 font-medium tracking-widest uppercase text-xs mb-1">Image Upload Zone</span>
-                <span className="text-gray-500 text-[9px] uppercase tracking-widest">[ Awaiting Piece Focus ]</span>
-              </div>
-            )}
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#111216] via-[#111216]/85 to-transparent px-4 py-3">
-              <span className="block text-[9px] uppercase tracking-[0.35em] text-white/65">PUW Preview</span>
-              <span className="mt-1 block text-[10px] font-semibold uppercase tracking-[0.28em] text-white">
-                {activePieceHeading || 'Standby'}
-              </span>
-            </div>
-          </div>
-        </div>
+        {showPiecePreview ? (
+          <img
+            src={activePieceImage}
+            alt={activePieceHeading || 'Focused chess piece'}
+            className="absolute bottom-8 left-8 z-20 h-auto w-[220px] md:bottom-10 md:left-10 md:w-[280px] object-contain transition-all duration-500 ease-out"
+          />
+        ) : null}
 
         <div
-          ref={hintRef}
           id="section2-hint"
-          className="absolute bottom-10 left-10 text-white text-sm uppercase tracking-[0.2em] font-bold flex items-center transition-opacity duration-300 opacity-100 z-10 pointer-events-none drop-shadow-lg"
+          className={`absolute bottom-10 left-10 text-white text-sm uppercase tracking-[0.2em] font-bold flex items-center transition-opacity duration-300 z-10 pointer-events-none drop-shadow-lg ${
+            showHints ? 'opacity-100' : 'opacity-0'
+          }`}
         >
           <span className="inline-flex items-center border-2 border-white rounded px-2.5 py-1.5 mr-3 bg-white/20 text-white font-extrabold drop-shadow">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="mr-2"><line x1="2" y1="12" x2="22" y2="12"></line><polyline points="15 5 22 12 15 19"></polyline><line x1="2" y1="5" x2="2" y2="19"></line></svg>
@@ -1034,7 +1213,7 @@ const ChessTreadmill = ({ headerHeight }) => {
         </div>
 
         <div
-          className={`absolute top-24 right-10 z-20 min-w-[300px] px-8 py-6 rounded-xl transition-all duration-500 ease-out shadow-[0_20px_40px_rgba(0,0,0,0.5)] ${pieceInfo.active ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-4 scale-95 pointer-events-none'}`}
+          className={`absolute top-24 right-10 z-20 min-w-[300px] px-8 py-6 rounded-xl transition-all duration-500 ease-out shadow-[0_20px_40px_rgba(0,0,0,0.5)] ${showPieceText ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-4 scale-95 pointer-events-none'}`}
           style={{
             backgroundColor: isRiskTheme ? '#97182E' : '#F3F2EE',
             color: '#1A1A1D',
@@ -1051,9 +1230,10 @@ const ChessTreadmill = ({ headerHeight }) => {
         </div>
 
         <div
-          ref={hintPiecesRef}
           id="section2-hint-pieces"
-          className="absolute top-10 right-10 text-white text-sm uppercase tracking-[0.2em] font-bold flex items-center transition-opacity duration-300 opacity-100 z-10 pointer-events-none drop-shadow-lg"
+          className={`absolute top-10 right-10 text-white text-sm uppercase tracking-[0.2em] font-bold flex items-center transition-opacity duration-300 z-10 pointer-events-none drop-shadow-lg ${
+            showHints ? 'opacity-100' : 'opacity-0'
+          }`}
         >
           <span className="inline-flex items-center border-2 border-white rounded px-2.5 py-1.5 mr-3 bg-white/20 text-white font-extrabold drop-shadow">
             <SpacebarIcon size={14} className="mr-2" />
@@ -1070,7 +1250,9 @@ const ChessTreadmill = ({ headerHeight }) => {
 
 export default function App() {
   const siteHeaderRef = useRef(null);
-  const [headerHeight, setHeaderHeight] = useState(144);
+  const navMenusRef = useRef(null);
+  const [headerHeight, setHeaderHeight] = useState(72);
+  const [openMenuKey, setOpenMenuKey] = useState(null);
 
   useEffect(() => {
     const headerEl = siteHeaderRef.current;
@@ -1097,6 +1279,30 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    const handlePointerDown = (event) => {
+      if (navMenusRef.current && !navMenusRef.current.contains(event.target)) {
+        setOpenMenuKey(null);
+      }
+    };
+
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setOpenMenuKey(null);
+      }
+    };
+
+    window.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  const heroHeight = `calc(100svh - ${headerHeight}px)`;
+
   return (
     <div
       className="min-h-screen flex flex-col font-sans selection:bg-[#97182E] selection:text-white scroll-smooth"
@@ -1113,74 +1319,53 @@ export default function App() {
 
       <header
         ref={siteHeaderRef}
-        className="sticky top-0 z-50 flex flex-wrap items-center justify-between gap-x-8 gap-y-4 px-6 py-3 md:px-12 md:py-4 border-b border-white/20 bg-[#2A2B30]/90 backdrop-blur-md"
+        className="sticky top-0 z-50 flex flex-wrap items-center justify-between gap-x-5 gap-y-2 border-b border-white/14 bg-[#151922]/94 px-4 py-2 md:px-7 md:py-2.5 shadow-[0_14px_34px_rgba(0,0,0,0.22)]"
       >
         <div className="flex items-center text-white shrink-0">
-          <img src={logoSvg} alt="CRE POV" className="h-[105px] w-auto max-w-none" />
+          <img src={logoSvg} alt="CRE POV" className="h-[52px] w-auto max-w-none md:h-[54px]" />
         </div>
-        <nav className="flex flex-wrap justify-end gap-4 md:gap-8 text-[12px] md:text-[14px] text-white font-medium tracking-wide items-center">
-          <div className="relative group">
-            <button className="flex items-center gap-1.5 hover:text-gray-300 transition-colors py-2">
-              Explanation <ChevronDownIcon />
-            </button>
-            <div className="absolute top-full left-0 mt-0 w-32 bg-[#222327] border border-white/10 rounded shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 flex flex-col z-50 overflow-hidden">
-              <a href="#what" className="px-4 py-3 hover:bg-white/10 text-left transition-colors border-b border-white/5 uppercase text-xs tracking-wider">What</a>
-              <a href="#who" className="px-4 py-3 hover:bg-white/10 text-left transition-colors border-b border-white/5 uppercase text-xs tracking-wider">Who</a>
-              <a href="#where" className="px-4 py-3 hover:bg-white/10 text-left transition-colors uppercase text-xs tracking-wider">Where</a>
-            </div>
-          </div>
-
-          <div className="relative group">
-            <button className="flex items-center gap-1.5 hover:text-gray-300 transition-colors py-2">
-              Resources <ChevronDownIcon />
-            </button>
-            <div className="absolute top-full left-0 mt-0 w-64 bg-[#222327] border border-white/10 rounded shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 flex flex-col z-50 overflow-hidden">
-              <div className="px-4 py-2 bg-white/5 text-[10px] text-gray-400 uppercase tracking-widest border-b border-white/5">For Owners</div>
-              <a href="#" className="px-4 py-3 hover:bg-white/10 text-left transition-colors border-b border-white/5 text-xs uppercase tracking-wider pl-6">Retail Services</a>
-
-              <div className="px-4 py-2 bg-white/5 text-[10px] text-gray-400 uppercase tracking-widest border-b border-white/5">For Brokers</div>
-              <a href="#" className="px-4 py-3 hover:bg-white/10 text-left transition-colors border-b border-white/5 text-xs uppercase tracking-wider pl-6">Spreadsheet Templates</a>
-              <a href="#" className="px-4 py-3 hover:bg-white/10 text-left transition-colors text-xs uppercase tracking-wider pl-6">AI Prompt Templates</a>
-            </div>
-          </div>
-
-          <div className="relative group">
-            <button className="flex items-center gap-1.5 hover:text-gray-300 transition-colors py-2">
-              Contact <ChevronDownIcon />
-            </button>
-            <div className="absolute top-full right-0 mt-0 w-56 bg-[#222327] border border-white/10 rounded shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 flex flex-col z-50 overflow-hidden">
-              <a href="mailto:crepovbot@gmail.com" className="px-4 py-3 hover:bg-white/10 text-left transition-colors border-b border-white/5 text-xs uppercase tracking-wider">Email Us</a>
-
-              <div className="px-4 py-2 bg-white/5 text-[10px] text-gray-400 uppercase tracking-widest border-b border-white/5">Story to tell?</div>
-              <a href="#" className="px-4 py-3 hover:bg-white/10 text-left transition-colors border-b border-white/5 text-xs uppercase tracking-wider pl-6">Requirements</a>
-              <a href="#" className="px-4 py-3 hover:bg-white/10 text-left transition-colors text-xs uppercase tracking-wider pl-6">Questionnaire</a>
-            </div>
-          </div>
+        <nav
+          ref={navMenusRef}
+          className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1.5 md:gap-2"
+        >
+          {HEADER_MENUS.map((menu) => (
+            <HeaderMenu
+              key={menu.key}
+              menu={menu}
+              isOpen={openMenuKey === menu.key}
+              onOpen={setOpenMenuKey}
+              onToggle={(menuKey) => setOpenMenuKey((current) => (current === menuKey ? null : menuKey))}
+              onClose={() => setOpenMenuKey(null)}
+            />
+          ))}
         </nav>
       </header>
 
       <section
         id="what"
-        className="relative flex-none h-screen border-b border-white/20 overflow-hidden"
-        style={{
-          marginTop: `-${headerHeight}px`,
-          paddingTop: `${headerHeight}px`,
-          boxSizing: 'border-box',
-        }}
+        className="relative flex-none overflow-hidden border-b border-white/20 bg-[#0c1117]"
+        style={{ minHeight: heroHeight }}
       >
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,rgba(33,73,114,0.3)_0%,rgba(11,15,21,0.96)_84%)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(8,12,18,0.18)_0%,rgba(8,12,18,0.05)_34%,rgba(14,16,22,0.58)_100%)]" />
         <div className="absolute inset-0">
+          <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-b from-transparent to-[#1C1D21]" />
+        </div>
+
+        <div
+          className="relative flex w-full items-center justify-center px-3 sm:px-5 md:px-8"
+          style={{ minHeight: heroHeight, contain: 'paint' }}
+        >
           <img
             src={leagueSpartanBg}
             alt=""
             aria-hidden="true"
-            className="h-full w-full object-cover object-center"
+            decoding="async"
+            fetchPriority="high"
+            draggable="false"
+            className="block h-auto w-full max-w-[2048px] object-contain object-center select-none"
+            style={{ maxHeight: heroHeight, transform: 'translateZ(0)' }}
           />
-          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(8,12,18,0.58)_0%,rgba(8,12,18,0.18)_34%,rgba(8,12,18,0.1)_58%,rgba(14,16,22,0.72)_100%)]" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,transparent_42%,rgba(0,0,0,0.18)_70%,rgba(0,0,0,0.5)_100%)]" />
-          <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-b from-transparent to-[#1C1D21]" />
-        </div>
-
-        <div className="relative flex h-full w-full items-end px-6 pb-6 sm:px-10 sm:pb-8 md:px-12 md:pb-10">
           <div className="sr-only">
             <h1>CRE Stories Gamified</h1>
             <p>Never CRE the same.</p>
