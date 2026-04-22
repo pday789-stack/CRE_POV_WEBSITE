@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import logoSvg from '../CRE POV WEBSITE ASSETS/LOGO.svg';
+import leagueSpartanBg from '../CRE POV WEBSITE ASSETS/League Spartan.png';
 import whiteChessPiecesGlb from '../CRE POV WEBSITE ASSETS/White_Chess_Pieces.glb';
 import redChessPiecesGlb from '../CRE POV WEBSITE ASSETS/Red_Chess_Pieces.glb';
 import puwWhiteKing from '../CRE POV WEBSITE ASSETS/PUW_WHITE_KING.svg';
@@ -45,6 +46,10 @@ const PIECE_HEIGHTS = {
   rook: 3.9,
   pawn: 3.1,
 };
+
+const PIECE_SCALE_MULTIPLIER = 1.3;
+const PIECE_BASE_LIFT = 1.18;
+const PIECE_BOB_AMPLITUDE = 0.12;
 
 const PIECE_IMAGES = {
   owner: {
@@ -340,10 +345,11 @@ const OctahedronScene = () => {
 };
 
 // --- CHESS TREADMILL COMPONENT (SECTION 2) ---
-const ChessTreadmill = () => {
+const ChessTreadmill = ({ headerHeight }) => {
   const mountRef = useRef(null);
   const containerRef = useRef(null);
   const headerRef = useRef(null);
+  const headerHeightRef = useRef(headerHeight);
 
   const headingRef = useRef(null);
   const hintRef = useRef(null);
@@ -351,6 +357,10 @@ const ChessTreadmill = () => {
 
   const [pieceInfo, setPieceInfo] = useState(() => createEmptyPieceInfo());
   const [isRiskTheme, setIsRiskTheme] = useState(false);
+
+  useEffect(() => {
+    headerHeightRef.current = headerHeight;
+  }, [headerHeight]);
 
   useEffect(() => {
     if (!mountRef.current) return undefined;
@@ -393,12 +403,28 @@ const ChessTreadmill = () => {
     const currentMount = mountRef.current;
     currentMount.appendChild(renderer.domElement);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.0);
-    dirLight.position.set(15, 30, 15);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.58));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.1);
+    dirLight.position.set(18, 30, 14);
     dirLight.castShadow = true;
     dirLight.shadow.mapSize.set(2048, 2048);
     scene.add(dirLight);
+
+    const centerSpotLight = new THREE.SpotLight(0xffffff, 2.7, 85, Math.PI / 5, 0.42, 1.15);
+    centerSpotLight.position.set(0, 22, 4);
+    centerSpotLight.castShadow = true;
+    centerSpotLight.shadow.mapSize.set(1024, 1024);
+    centerSpotLight.target.position.set(0, 0, 0);
+    scene.add(centerSpotLight);
+    scene.add(centerSpotLight.target);
+
+    const centerFillLight = new THREE.PointLight(0xffefdc, 1.5, 65, 2);
+    centerFillLight.position.set(0, 11, 8);
+    scene.add(centerFillLight);
+
+    const rimLight = new THREE.DirectionalLight(0xb7d4ff, 0.55);
+    rimLight.position.set(-16, 14, -10);
+    scene.add(rimLight);
 
     const loader = new GLTFLoader();
 
@@ -441,6 +467,13 @@ const ChessTreadmill = () => {
       return fade * fade * (3 - 2 * fade);
     }
 
+    function getCenterFocus(currentX, falloff = 8.5) {
+      const focus = 1 - Math.min(1, Math.abs(currentX) / falloff);
+      return focus * focus * (3 - 2 * focus);
+    }
+
+    const centerHighlightColor = new THREE.Color(0xffffff);
+
     function createChessRoad() {
       const widthTiles = 5;
       const lengthTiles = 24;
@@ -465,7 +498,13 @@ const ChessTreadmill = () => {
           tile.add(new THREE.LineSegments(new THREE.EdgesGeometry(tileGeo), new THREE.LineBasicMaterial({ color: edgeColor, transparent: true })));
 
           const originalZ = (z - Math.floor(widthTiles / 2)) * tileSize;
-          tile.userData = { originalX, originalZ, dropDist: Math.random() * 40 + 20, isDark };
+          tile.userData = {
+            originalX,
+            originalZ,
+            dropDist: Math.random() * 40 + 20,
+            isDark,
+            emissiveColor: new THREE.Color(isDark ? 0x2d1710 : 0x755a3c),
+          };
           boardTiles.push(tile);
           boardGroup.add(tile);
         }
@@ -485,7 +524,7 @@ const ChessTreadmill = () => {
 
       const adjustedBox = new THREE.Box3().setFromObject(modelRoot);
       const size = adjustedBox.getSize(new THREE.Vector3());
-      const targetHeight = PIECE_HEIGHTS[pieceType] ?? 4;
+      const targetHeight = (PIECE_HEIGHTS[pieceType] ?? 4) * PIECE_SCALE_MULTIPLIER;
       const scale = size.y > 0 ? targetHeight / size.y : 1;
       modelRoot.scale.setScalar(scale);
     }
@@ -575,7 +614,7 @@ const ChessTreadmill = () => {
         redSub: 'Goal: maximize loss',
       }));
 
-      placePiece('bishop', 30, -4.5, buildPieceUiData('bishop', {
+      placePiece('bishop', 30, -5.75, buildPieceUiData('bishop', {
         whiteHeading: 'BUREAUCRACY',
         redHeading: 'BUREAUCRACY',
         whiteSub: 'Mitigate liability/ red tape',
@@ -589,22 +628,24 @@ const ChessTreadmill = () => {
         redSub: 'Deterioration',
       }));
 
-      placePiece('knight', 30, 4.5, buildPieceUiData('knight', {
+      placePiece('knight', 30, 5.75, buildPieceUiData('knight', {
         whiteHeading: 'LEASING',
         redHeading: 'LEASING',
         whiteSub: 'Synergistic occupancy',
         redSub: 'High Vacancy',
       }));
 
-      placePiece('queen', 60, 0, buildPieceUiData('queen', {
+      const queenX = 60;
+      const queenZ = 0;
+
+      placePiece('queen', queenX, queenZ, buildPieceUiData('queen', {
         whiteHeading: 'ECONOMY',
         redHeading: 'ECONOMY',
         whiteSub: 'STRONG MARKET',
         redSub: '[HARSH MARKET]',
       }));
 
-      const numPawns = 4;
-      const pawnRadius = 4.5;
+      const pawnBoxOffset = 4.6;
       const pawnData = buildPieceUiData('pawn', {
         whiteHeading: 'TIMING',
         redHeading: 'TIMING',
@@ -612,12 +653,14 @@ const ChessTreadmill = () => {
         redSub: '[via pawn differential]\nMore pressure to sell',
       });
 
-      for (let i = 0; i < numPawns; i += 1) {
-        const angle = (i / numPawns) * Math.PI * 2;
-        const px = 60 + Math.cos(angle) * pawnRadius;
-        const pz = Math.sin(angle) * pawnRadius;
-        placePiece('pawn', px, pz, pawnData);
-      }
+      [
+        [-pawnBoxOffset, -pawnBoxOffset],
+        [pawnBoxOffset, -pawnBoxOffset],
+        [-pawnBoxOffset, pawnBoxOffset],
+        [pawnBoxOffset, pawnBoxOffset],
+      ].forEach(([offsetX, offsetZ]) => {
+        placePiece('pawn', queenX + offsetX, queenZ + offsetZ, pawnData);
+      });
     }
 
     function toggleMode() {
@@ -743,8 +786,7 @@ const ChessTreadmill = () => {
             const rect = containerRef.current.getBoundingClientRect();
             const absoluteTop = window.scrollY + rect.top;
             const scrollDist = rect.height - window.innerHeight;
-            const headerHeight = 82;
-            const targetY = absoluteTop - headerHeight + (progress * scrollDist);
+            const targetY = absoluteTop - getHeaderHeight() + (progress * scrollDist);
             window.scrollTo({ top: targetY, behavior: 'smooth' });
           }
         }
@@ -760,12 +802,13 @@ const ChessTreadmill = () => {
 
     updateMilestoneText(0);
 
+    const getHeaderHeight = () => headerHeightRef.current || 0;
+
     const handleScroll = () => {
       if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
-      const headerHeight = 82;
       const scrollDistance = rect.height - window.innerHeight;
-      let progress = -(rect.top - headerHeight) / scrollDistance;
+      let progress = -(rect.top - getHeaderHeight()) / scrollDistance;
       progress = Math.max(0, Math.min(1, progress));
       targetScrollPos = progress * 80;
     };
@@ -830,16 +873,22 @@ const ChessTreadmill = () => {
         tile.rotation.set(transform.rx, transform.ry, transform.rz);
 
         const fade = getUnifiedFade(currentX);
+        const centerFocus = getCenterFocus(currentX, 8.75);
         tile.material.opacity = fade * introState.p;
+        if ('emissive' in tile.material && tile.material.emissive) {
+          tile.material.emissive.copy(tile.userData.emissiveColor);
+          tile.material.emissiveIntensity = 0.05 + centerFocus * (tile.userData.isDark ? 0.36 : 0.24);
+        }
         if (tile.children[0]) tile.children[0].material.opacity = (fade * introState.p) * 0.4;
       });
 
       interactivePieces.forEach((piece) => {
         const currentX = piece.userData.logicalX - pathScroll;
         const transform = get4DTransform(currentX, piece.userData.logicalZ);
-        const bobbing = Math.sin(time * piece.userData.floatSpeed + piece.userData.floatOffset) * 0.4;
+        const centerFocus = getCenterFocus(currentX, 8.25);
+        const bobbing = Math.sin(time * piece.userData.floatSpeed + piece.userData.floatOffset) * PIECE_BOB_AMPLITUDE;
 
-        piece.position.set(transform.x, transform.y + 0.75 + bobbing, transform.z);
+        piece.position.set(transform.x, transform.y + PIECE_BASE_LIFT + bobbing, transform.z);
         piece.rotation.set(transform.rx, transform.ry, transform.rz);
         piece.userData.themeMix += (piece.userData.targetThemeMix - piece.userData.themeMix) * 0.08;
 
@@ -863,6 +912,11 @@ const ChessTreadmill = () => {
               const themeMaterial = child.userData.themeMaterials[index] ?? child.userData.themeMaterials[0];
               if (material.color && themeMaterial) {
                 material.color.copy(themeMaterial.ownerColor).lerp(themeMaterial.riskColor, piece.userData.themeMix);
+                material.color.lerp(centerHighlightColor, centerFocus * 0.16);
+              }
+              if ('emissive' in material && material.emissive) {
+                material.emissive.copy(material.color ?? centerHighlightColor);
+                material.emissiveIntensity = 0.08 + centerFocus * 0.55 + (isFocused ? 0.18 : 0);
               }
               material.opacity = fade * introState.p;
             });
@@ -923,7 +977,13 @@ const ChessTreadmill = () => {
 
   return (
     <div ref={containerRef} className="relative w-full h-[300vh] bg-[#222327]">
-      <div className="sticky top-[82px] w-full h-[calc(100vh-82px)] overflow-hidden">
+      <div
+        className="sticky w-full overflow-hidden"
+        style={{
+          top: headerHeight,
+          height: `calc(100vh - ${headerHeight}px)`,
+        }}
+      >
         <div
           ref={headerRef}
           id="section2-header-container"
@@ -1009,7 +1069,33 @@ const ChessTreadmill = () => {
 };
 
 export default function App() {
-  const [activeButton, setActiveButton] = useState('brain');
+  const siteHeaderRef = useRef(null);
+  const [headerHeight, setHeaderHeight] = useState(144);
+
+  useEffect(() => {
+    const headerEl = siteHeaderRef.current;
+    if (!headerEl) return undefined;
+
+    const syncHeaderHeight = () => {
+      const nextHeight = Math.round(headerEl.getBoundingClientRect().height);
+      if (nextHeight > 0) setHeaderHeight(nextHeight);
+    };
+
+    syncHeaderHeight();
+
+    let resizeObserver;
+    if ('ResizeObserver' in window) {
+      resizeObserver = new ResizeObserver(syncHeaderHeight);
+      resizeObserver.observe(headerEl);
+    }
+
+    window.addEventListener('resize', syncHeaderHeight);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', syncHeaderHeight);
+    };
+  }, []);
 
   return (
     <div
@@ -1025,11 +1111,14 @@ export default function App() {
         html { scroll-behavior: smooth; }
       `}</style>
 
-      <header className="sticky top-0 z-50 flex justify-between items-center px-12 py-5 border-b border-white/20 bg-[#2A2B30]/90 backdrop-blur-md">
+      <header
+        ref={siteHeaderRef}
+        className="sticky top-0 z-50 flex flex-wrap items-center justify-between gap-x-8 gap-y-4 px-6 py-3 md:px-12 md:py-4 border-b border-white/20 bg-[#2A2B30]/90 backdrop-blur-md"
+      >
         <div className="flex items-center text-white shrink-0">
-          <img src={logoSvg} alt="CRE POV" className="h-[42px] w-auto max-w-none" />
+          <img src={logoSvg} alt="CRE POV" className="h-[105px] w-auto max-w-none" />
         </div>
-        <nav className="flex gap-6 md:gap-8 text-[14px] text-white font-medium tracking-wide items-center">
+        <nav className="flex flex-wrap justify-end gap-4 md:gap-8 text-[12px] md:text-[14px] text-white font-medium tracking-wide items-center">
           <div className="relative group">
             <button className="flex items-center gap-1.5 hover:text-gray-300 transition-colors py-2">
               Explanation <ChevronDownIcon />
@@ -1070,26 +1159,37 @@ export default function App() {
         </nav>
       </header>
 
-      <section id="what" className="relative flex-none min-h-[500px] border-b border-white/20 flex flex-col md:flex-row overflow-hidden pt-8 pb-8 md:pb-0">
-        <div className="w-full md:w-[55%] flex flex-col justify-center px-12 z-20">
-          <h1 className="text-white text-4xl md:text-[42px] leading-[1.2] font-bold tracking-tight mb-4 drop-shadow-lg">CRE content as never seen.</h1>
-          <p className="text-gray-300 text-xl font-light mb-10 drop-shadow-sm">Never CRE the same.</p>
-          <div className="flex gap-4">
-            <button onClick={() => setActiveButton('mic')} className={`flex justify-center items-center w-24 h-14 rounded-md transition-all duration-300 shadow-xl ${activeButton === 'mic' ? 'bg-[#5c101a] border border-pink-300/40 ring-[3px] ring-pink-300/60 shadow-[0_0_20px_rgba(255,192,203,0.3)]' : 'bg-[#731221] border border-black/50 hover:bg-[#8A1628]'}`}><MicIcon color="white" /></button>
-            <button onClick={() => setActiveButton('brain')} className={`flex justify-center items-center w-24 h-14 rounded-md transition-all duration-300 shadow-xl ${activeButton === 'brain' ? 'bg-[#5c101a] border border-pink-300/40 ring-[3px] ring-pink-300/60 shadow-[0_0_20px_rgba(255,192,203,0.3)]' : 'bg-[#731221] border border-black/50 hover:bg-[#8A1628]'}`}><BrainIcon color="white" /></button>
-            <button onClick={() => setActiveButton('knight')} className={`flex justify-center items-center w-24 h-14 rounded-md transition-all duration-300 shadow-xl ${activeButton === 'knight' ? 'bg-[#5c101a] border border-pink-300/40 ring-[3px] ring-pink-300/60 shadow-[0_0_20px_rgba(255,192,203,0.3)]' : 'bg-[#731221] border border-black/50 hover:bg-[#8A1628]'}`}><KnightIcon className="text-white" /></button>
-          </div>
+      <section
+        id="what"
+        className="relative flex-none h-screen border-b border-white/20 overflow-hidden"
+        style={{
+          marginTop: `-${headerHeight}px`,
+          paddingTop: `${headerHeight}px`,
+          boxSizing: 'border-box',
+        }}
+      >
+        <div className="absolute inset-0">
+          <img
+            src={leagueSpartanBg}
+            alt=""
+            aria-hidden="true"
+            className="h-full w-full object-cover object-center"
+          />
+          <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(8,12,18,0.58)_0%,rgba(8,12,18,0.18)_34%,rgba(8,12,18,0.1)_58%,rgba(14,16,22,0.72)_100%)]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,transparent_42%,rgba(0,0,0,0.18)_70%,rgba(0,0,0,0.5)_100%)]" />
+          <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-b from-transparent to-[#1C1D21]" />
         </div>
-        <div className="relative md:absolute right-0 top-0 w-full md:w-[60%] h-full z-10 flex items-center justify-center pointer-events-none md:pr-12 mt-10 md:mt-0 px-6">
-          <div className="w-full max-w-[500px] aspect-[4/3] rounded-xl border-2 border-dashed border-gray-500/50 bg-[#222327]/60 flex flex-col items-center justify-center drop-shadow-[0_20px_30px_rgba(0,0,0,0.6)] shadow-[0_0_40px_rgba(0,0,0,0.3)] hover:-translate-y-2 transition-transform duration-500 ease-out cursor-pointer pointer-events-auto">
-            <span className="text-gray-400 font-medium tracking-widest uppercase text-sm">Image Upload Zone</span>
-            <span className="text-gray-600 mt-2 text-[10px] uppercase tracking-widest">[ White Sunglasses ]</span>
+
+        <div className="relative flex h-full w-full items-end px-6 pb-6 sm:px-10 sm:pb-8 md:px-12 md:pb-10">
+          <div className="sr-only">
+            <h1>CRE Stories Gamified</h1>
+            <p>Never CRE the same.</p>
           </div>
         </div>
       </section>
 
       <section id="who" className="w-full border-b border-white/20 relative">
-        <ChessTreadmill />
+        <ChessTreadmill headerHeight={headerHeight} />
       </section>
 
       <section id="where" className="w-full min-h-[600px] bg-[#1C1D21] flex flex-col items-center justify-start px-12 py-20 relative overflow-hidden">
