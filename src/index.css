@@ -13,3 +13,67 @@ body,
 body {
   margin: 0;
 }
+
+.animated-spacebar {
+  display: inline-flex;
+  filter: drop-shadow(0 14px 18px rgba(0, 0, 0, 0.28));
+}
+
+.animated-spacebar__base {
+  display: flex;
+  justify-content: center;
+  border-radius: 12px;
+  background-color: #8e8e92;
+  padding: 6px 8px 8px;
+  box-shadow: 0 6px 0 #67676c;
+}
+
+.animated-spacebar__key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 168px;
+  height: 44px;
+  border-radius: 6px;
+  background: linear-gradient(to bottom, #2f3138, #1f2127);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.12),
+    0 8px 0 #111216;
+  color: #ffffff;
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 1rem;
+  font-style: italic;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transform: translateY(-4px);
+  animation: animated-spacebar-press 2s infinite cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+}
+
+@keyframes animated-spacebar-press {
+  0%,
+  10%,
+  100% {
+    transform: translateY(-4px);
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.12),
+      0 8px 0 #111216;
+  }
+
+  50%,
+  60% {
+    transform: translateY(4px);
+    box-shadow:
+      inset 0 1px 1px rgba(255, 255, 255, 0.12),
+      0 0 0 #111216;
+  }
+}
+
+@media (max-width: 640px) {
+  .animated-spacebar__key {
+    min-width: 144px;
+    height: 40px;
+    font-size: 0.92rem;
+  }
+}

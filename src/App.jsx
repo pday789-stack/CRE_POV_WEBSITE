@@ -155,10 +155,12 @@ const SpotifyIcon = ({ size = 24, className = '' }) => (
   </svg>
 );
 
-const SpacebarIcon = ({ size = 24, className = '' }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <rect x="2" y="10" width="20" height="4" rx="1" />
-  </svg>
+const AnimatedSpacebarHint = () => (
+  <div className="animated-spacebar" aria-hidden="true">
+    <div className="animated-spacebar__base">
+      <div className="animated-spacebar__key">Space</div>
+    </div>
+  </div>
 );
 
 const HEADER_MENUS = [
@@ -219,14 +221,14 @@ const HEADER_MENUS = [
   },
 ];
 
-const HeaderMenu = ({ menu, isOpen, onOpen, onToggle, onClose }) => {
+const HeaderMenu = ({ menu, isOpen, onOpen, onToggle, onHoverClose, onClose }) => {
   const panelAlignment = menu.align === 'right' ? 'right-0 origin-top-right' : 'left-0 origin-top-left';
 
   return (
     <div
       className="relative"
       onMouseEnter={() => onOpen(menu.key)}
-      onMouseLeave={onClose}
+      onMouseLeave={onHoverClose}
     >
       <button
         type="button"
@@ -248,8 +250,10 @@ const HeaderMenu = ({ menu, isOpen, onOpen, onToggle, onClose }) => {
         </span>
       </button>
 
+      <div aria-hidden="true" className="absolute inset-x-0 top-full h-3" />
+
       <div
-        className={`absolute top-full ${panelAlignment} mt-2 w-[min(88vw,248px)] rounded-2xl border border-white/12 bg-[#171a21]/96 p-2 shadow-[0_20px_50px_rgba(0,0,0,0.45)] transition-all duration-200 ${
+        className={`absolute top-full ${panelAlignment} z-30 mt-2 w-[min(88vw,248px)] rounded-2xl border border-white/12 bg-[#171a21]/96 p-2 shadow-[0_20px_50px_rgba(0,0,0,0.45)] transition-all duration-200 ${
           isOpen ? 'visible translate-y-0 opacity-100' : 'pointer-events-none invisible -translate-y-1 opacity-0'
         }`}
       >
@@ -715,7 +719,7 @@ const ChessTreadmill = ({ headerHeight }) => {
       return pieceGroup;
     }
 
-    function placePiece(pieceType, logicalX, logicalZ, uiData) {
+    function placePiece(pieceType, logicalX, logicalZ, uiData, positionOffset = null) {
       const meshGroup = createPieceInstance(pieceType);
       if (!meshGroup) return;
 
@@ -724,6 +728,7 @@ const ChessTreadmill = ({ headerHeight }) => {
         logicalX,
         logicalZ,
         uiData,
+        positionOffset: positionOffset ? new THREE.Vector3(...positionOffset) : null,
         floatOffset: Math.random() * Math.PI * 2,
         floatSpeed: 0.001 + Math.random() * 0.0015,
         dropDist: 0,
@@ -773,10 +778,10 @@ const ChessTreadmill = ({ headerHeight }) => {
       }));
 
       const pawnOffsets = [
-        [-2.35, -3.8],
-        [2.35, -3.8],
-        [-2.35, 3.8],
-        [2.35, 3.8],
+        [-3.15, 0, -3.1],
+        [3.15, 0, -3.1],
+        [-3.15, 0, 3.1],
+        [3.15, 0, 3.1],
       ];
       const pawnData = buildPieceUiData('pawn', {
         whiteHeading: 'TIMING',
@@ -785,8 +790,8 @@ const ChessTreadmill = ({ headerHeight }) => {
         redSub: '[via pawn differential]\nMore pressure to sell',
       });
 
-      pawnOffsets.forEach(([offsetX, offsetZ]) => {
-        placePiece('pawn', queenX + offsetX, queenZ + offsetZ, pawnData);
+      pawnOffsets.forEach((positionOffset) => {
+        placePiece('pawn', queenX, queenZ, pawnData, positionOffset);
       });
     }
 
@@ -992,6 +997,9 @@ const ChessTreadmill = ({ headerHeight }) => {
         console.error('Failed to load chess piece GLBs.', error);
       });
 
+    const pieceOffsetEuler = new THREE.Euler();
+    const pieceOffsetVector = new THREE.Vector3();
+
     const animate = () => {
       if (disposed || !isVisible) {
         isAnimating = false;
@@ -1055,6 +1063,11 @@ const ChessTreadmill = ({ headerHeight }) => {
 
         piece.position.set(transform.x, transform.y + PIECE_BASE_LIFT + bobbing, transform.z);
         piece.rotation.set(transform.rx, transform.ry, transform.rz);
+        if (piece.userData.positionOffset) {
+          pieceOffsetEuler.set(transform.rx, transform.ry, transform.rz);
+          pieceOffsetVector.copy(piece.userData.positionOffset).applyEuler(pieceOffsetEuler);
+          piece.position.add(pieceOffsetVector);
+        }
         piece.userData.themeMix += (piece.userData.targetThemeMix - piece.userData.themeMix) * 0.08;
 
         let isFocused = currentHoveredUUID === piece.uuid;
@@ -1167,6 +1180,7 @@ const ChessTreadmill = ({ headerHeight }) => {
   const showPiecePreview = pieceInfo.active && Boolean(activePieceImage);
   const showPieceText = pieceInfo.active && Boolean(activePieceHeading || activePieceSub);
   const showHints = showHintPrompts && !pieceInfo.active;
+  const showPieceToggleHint = !pieceInfo.active;
 
   return (
     <div ref={containerRef} className="relative w-full h-[300vh] bg-[#222327]">
@@ -1231,15 +1245,16 @@ const ChessTreadmill = ({ headerHeight }) => {
 
         <div
           id="section2-hint-pieces"
-          className={`absolute top-10 right-10 text-white text-sm uppercase tracking-[0.2em] font-bold flex items-center transition-opacity duration-300 z-10 pointer-events-none drop-shadow-lg ${
-            showHints ? 'opacity-100' : 'opacity-0'
+          className={`pointer-events-none absolute top-10 right-10 z-10 transition-opacity duration-300 ${
+            showPieceToggleHint ? 'opacity-100' : 'opacity-0'
           }`}
         >
-          <span className="inline-flex items-center border-2 border-white rounded px-2.5 py-1.5 mr-3 bg-white/20 text-white font-extrabold drop-shadow">
-            <SpacebarIcon size={14} className="mr-2" />
-            SPACE
-          </span>
-          TOGGLE PIECES
+          <div className="flex flex-col items-center gap-3 text-white">
+            <AnimatedSpacebarHint />
+            <span className="text-[11px] font-bold uppercase tracking-[0.34em] drop-shadow-lg md:text-sm">
+              TOGGLE PIECES
+            </span>
+          </div>
         </div>
 
         <div ref={mountRef} className="absolute inset-0 w-full h-full z-0 cursor-crosshair" />
@@ -1251,8 +1266,39 @@ const ChessTreadmill = ({ headerHeight }) => {
 export default function App() {
   const siteHeaderRef = useRef(null);
   const navMenusRef = useRef(null);
+  const closeMenuTimerRef = useRef(null);
   const [headerHeight, setHeaderHeight] = useState(72);
   const [openMenuKey, setOpenMenuKey] = useState(null);
+
+  const clearMenuCloseTimer = () => {
+    if (closeMenuTimerRef.current !== null) {
+      window.clearTimeout(closeMenuTimerRef.current);
+      closeMenuTimerRef.current = null;
+    }
+  };
+
+  const openMenu = (menuKey) => {
+    clearMenuCloseTimer();
+    setOpenMenuKey(menuKey);
+  };
+
+  const toggleMenu = (menuKey) => {
+    clearMenuCloseTimer();
+    setOpenMenuKey((current) => (current === menuKey ? null : menuKey));
+  };
+
+  const scheduleMenuClose = () => {
+    clearMenuCloseTimer();
+    closeMenuTimerRef.current = window.setTimeout(() => {
+      setOpenMenuKey(null);
+      closeMenuTimerRef.current = null;
+    }, 140);
+  };
+
+  const closeMenu = () => {
+    clearMenuCloseTimer();
+    setOpenMenuKey(null);
+  };
 
   useEffect(() => {
     const headerEl = siteHeaderRef.current;
@@ -1282,13 +1328,13 @@ export default function App() {
   useEffect(() => {
     const handlePointerDown = (event) => {
       if (navMenusRef.current && !navMenusRef.current.contains(event.target)) {
-        setOpenMenuKey(null);
+        closeMenu();
       }
     };
 
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
-        setOpenMenuKey(null);
+        closeMenu();
       }
     };
 
@@ -1298,6 +1344,7 @@ export default function App() {
     return () => {
       window.removeEventListener('pointerdown', handlePointerDown);
       window.removeEventListener('keydown', handleKeyDown);
+      clearMenuCloseTimer();
     };
   }, []);
 
@@ -1333,9 +1380,10 @@ export default function App() {
               key={menu.key}
               menu={menu}
               isOpen={openMenuKey === menu.key}
-              onOpen={setOpenMenuKey}
-              onToggle={(menuKey) => setOpenMenuKey((current) => (current === menuKey ? null : menuKey))}
-              onClose={() => setOpenMenuKey(null)}
+              onOpen={openMenu}
+              onToggle={toggleMenu}
+              onHoverClose={scheduleMenuClose}
+              onClose={closeMenu}
             />
           ))}
         </nav>
