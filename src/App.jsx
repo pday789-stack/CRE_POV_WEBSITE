@@ -1,6 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 
 import logoSvg from '../CRE POV WEBSITE ASSETS/LOGO.svg';
 import leagueSpartanBg from '../CRE POV WEBSITE ASSETS/League Spartan.png';
@@ -50,6 +52,39 @@ const PIECE_HEIGHTS = {
 const PIECE_SCALE_MULTIPLIER = 1.3;
 const PIECE_BASE_LIFT = 1.18;
 const PIECE_BOB_AMPLITUDE = 0.12;
+
+const CHESS_ROAD_WIDTH_TILES = 5;
+const CHESS_ROAD_LENGTH_TILES = 24;
+const CHESS_ROAD_START_COLUMN = -4;
+const CHESS_ROAD_TILE_SIZE = 3.5;
+const CHESS_ROAD_BOARD_THICKNESS = 1.5;
+const CHESS_ROAD_CENTER_ROW = Math.floor(CHESS_ROAD_WIDTH_TILES / 2);
+
+const clamp01 = (value) => Math.min(1, Math.max(0, value));
+const smoothstep = (edge0, edge1, value) => {
+  if (edge0 === edge1) return value < edge0 ? 0 : 1;
+  const t = clamp01((value - edge0) / (edge1 - edge0));
+  return t * t * (3 - 2 * t);
+};
+
+const makeTileCoord = (column, row) => ({ column, row });
+const cloneTileCoord = ({ column, row }) => ({ column, row });
+const getTileCoordKey = ({ column, row }) => `${column}:${row}`;
+const tileCoordToLogicalPosition = (column, row) => ({
+  logicalX: column * CHESS_ROAD_TILE_SIZE,
+  logicalZ: (row - CHESS_ROAD_CENTER_ROW) * CHESS_ROAD_TILE_SIZE,
+});
+const getNearestTileCoord = (logicalX, logicalZ) =>
+  makeTileCoord(
+    Math.round(logicalX / CHESS_ROAD_TILE_SIZE),
+    Math.max(
+      0,
+      Math.min(
+        CHESS_ROAD_WIDTH_TILES - 1,
+        Math.round(logicalZ / CHESS_ROAD_TILE_SIZE) + CHESS_ROAD_CENTER_ROW,
+      ),
+    ),
+  );
 
 const PIECE_IMAGES = {
   owner: {
@@ -159,6 +194,14 @@ const AnimatedSpacebarHint = () => (
   <div className="animated-spacebar" aria-hidden="true">
     <div className="animated-spacebar__base">
       <div className="animated-spacebar__key">Space</div>
+    </div>
+  </div>
+);
+
+const AnimatedTabHint = () => (
+  <div className="animated-tab" aria-hidden="true">
+    <div className="animated-tab__base">
+      <div className="animated-tab__key">Tab</div>
     </div>
   </div>
 );
@@ -502,6 +545,7 @@ const ChessTreadmill = ({ headerHeight }) => {
     let interactionMode = 'hover';
     let ownerPieceNodes = {};
     let riskPieceNodes = {};
+    let boardTileLookup = new Map();
     let frameId;
     let disposed = false;
     let isVisible = false;
@@ -527,32 +571,67 @@ const ChessTreadmill = ({ headerHeight }) => {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.88;
+    renderer.toneMappingExposure = 1.04;
 
     const currentMount = mountRef.current;
     currentMount.appendChild(renderer.domElement);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.26));
-    const dirLight = new THREE.DirectionalLight(0xf7f1e6, 0.72);
-    dirLight.position.set(14, 24, 8);
-    dirLight.castShadow = true;
-    dirLight.shadow.mapSize.set(2048, 2048);
-    scene.add(dirLight);
+    RectAreaLightUniformsLib.init();
 
-    const centerSpotLight = new THREE.SpotLight(0xfff5eb, 0.85, 36, Math.PI / 8.8, 0.58, 1.7);
-    centerSpotLight.position.set(2.8, 14, 5.8);
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    const environmentTarget = pmremGenerator.fromScene(new RoomEnvironment(), 0.08);
+    scene.environment = environmentTarget.texture;
+
+    const ambientHemisphereLight = new THREE.HemisphereLight(0xfaf1e4, 0x090b11, 0.34);
+    scene.add(ambientHemisphereLight);
+
+    const keyShadowLight = new THREE.SpotLight(0xfff1dd, 1.55, 86, Math.PI / 4.9, 0.74, 1.55);
+    keyShadowLight.position.set(18, 26, 16);
+    keyShadowLight.castShadow = true;
+    keyShadowLight.shadow.mapSize.set(3072, 3072);
+    keyShadowLight.shadow.bias = -0.00012;
+    keyShadowLight.shadow.normalBias = 0.04;
+    keyShadowLight.shadow.radius = 4;
+    keyShadowLight.target.position.set(3.5, 2.6, 0);
+    scene.add(keyShadowLight);
+    scene.add(keyShadowLight.target);
+
+    const displayFillLight = new THREE.RectAreaLight(0xfff6ee, 6.4, 20, 10);
+    displayFillLight.position.set(2, 15.5, 13.5);
+    displayFillLight.lookAt(4, 2.4, 0);
+    scene.add(displayFillLight);
+
+    const sideFillLight = new THREE.RectAreaLight(0xd7e4ff, 4.2, 10, 18);
+    sideFillLight.position.set(-16, 7, -6.5);
+    sideFillLight.lookAt(6, 2, 0);
+    scene.add(sideFillLight);
+
+    const warmRimLight = new THREE.SpotLight(0xffd8c6, 0.56, 82, Math.PI / 5.4, 0.88, 1.85);
+    warmRimLight.position.set(14, 10, -18);
+    warmRimLight.target.position.set(6, 2.2, 0);
+    scene.add(warmRimLight);
+    scene.add(warmRimLight.target);
+
+    const coolRimLight = new THREE.SpotLight(0xc8dcff, 0.82, 90, Math.PI / 5.1, 0.9, 1.9);
+    coolRimLight.position.set(-20, 11.5, -14);
+    coolRimLight.target.position.set(2, 2.4, 0);
+    scene.add(coolRimLight);
+    scene.add(coolRimLight.target);
+
+    const centerSpotLight = new THREE.SpotLight(0xffffff, 1.15, 44, Math.PI / 9.6, 0.84, 1.4);
+    centerSpotLight.position.set(4.8, 15.5, 7.2);
     centerSpotLight.castShadow = true;
-    centerSpotLight.shadow.mapSize.set(1024, 1024);
+    centerSpotLight.shadow.mapSize.set(2048, 2048);
+    centerSpotLight.shadow.bias = -0.00014;
+    centerSpotLight.shadow.normalBias = 0.05;
+    centerSpotLight.shadow.radius = 3;
     centerSpotLight.target.position.set(0, 0, 0);
     scene.add(centerSpotLight);
     scene.add(centerSpotLight.target);
-
-    const rimLight = new THREE.DirectionalLight(0xb7d4ff, 0.28);
-    rimLight.position.set(-18, 12, -12);
-    scene.add(rimLight);
 
     const loader = new GLTFLoader();
 
@@ -600,25 +679,44 @@ const ChessTreadmill = ({ headerHeight }) => {
       return focus * focus * (3 - 2 * focus);
     }
 
-    const centerHighlightColor = new THREE.Color(0xfff6ee);
+    function getBoardAssemblyProgress(currentX) {
+      if (currentX > 10.5) {
+        return 1 - smoothstep(12.1, 18.4, currentX);
+      }
+      if (currentX < -7.5) {
+        return 1 - smoothstep(-12.5, -8.2, currentX);
+      }
+      return 1;
+    }
+
+    const centerHighlightWarm = new THREE.Color(0xfff3e3);
+    const centerHighlightCool = new THREE.Color(0xdfe9ff);
     const spotlightWorldTarget = new THREE.Vector3();
     const spotlightWorldPosition = new THREE.Vector3();
 
     function createChessRoad() {
-      const widthTiles = 5;
-      const lengthTiles = 24;
-      const tileSize = 3.5;
-      const boardThickness = 1.5;
       const boardGroup = new THREE.Group();
-      const matLight = new THREE.MeshStandardMaterial({ color: COLOR_BOARD_LIGHT_WOOD, roughness: 0.2, metalness: 0.1, transparent: true });
-      const matDark = new THREE.MeshStandardMaterial({ color: COLOR_BOARD_DARK_OAK, roughness: 0.15, metalness: 0.2, transparent: true });
+      const matLight = new THREE.MeshStandardMaterial({
+        color: COLOR_BOARD_LIGHT_WOOD,
+        roughness: 0.48,
+        metalness: 0.05,
+        envMapIntensity: 0.22,
+        transparent: true,
+      });
+      const matDark = new THREE.MeshStandardMaterial({
+        color: COLOR_BOARD_DARK_OAK,
+        roughness: 0.36,
+        metalness: 0.08,
+        envMapIntensity: 0.18,
+        transparent: true,
+      });
 
-      for (let x = -4; x < lengthTiles; x += 1) {
-        for (let z = 0; z < widthTiles; z += 1) {
+      for (let x = CHESS_ROAD_START_COLUMN; x < CHESS_ROAD_LENGTH_TILES; x += 1) {
+        for (let z = 0; z < CHESS_ROAD_WIDTH_TILES; z += 1) {
           const isDark = (x + z) % 2 === 0;
-          const tileGeo = new THREE.BoxGeometry(tileSize, boardThickness, tileSize);
+          const tileGeo = new THREE.BoxGeometry(CHESS_ROAD_TILE_SIZE, CHESS_ROAD_BOARD_THICKNESS, CHESS_ROAD_TILE_SIZE);
           const tileMat = isDark ? matDark.clone() : matLight.clone();
-          const originalX = x * tileSize;
+          const originalX = x * CHESS_ROAD_TILE_SIZE;
 
           const tile = new THREE.Mesh(tileGeo, tileMat);
           tile.receiveShadow = true;
@@ -627,15 +725,20 @@ const ChessTreadmill = ({ headerHeight }) => {
           const edgeColor = isDark ? COLOR_EDGE_DARK : COLOR_EDGE_LIGHT;
           tile.add(new THREE.LineSegments(new THREE.EdgesGeometry(tileGeo), new THREE.LineBasicMaterial({ color: edgeColor, transparent: true })));
 
-          const originalZ = (z - Math.floor(widthTiles / 2)) * tileSize;
+          const originalZ = (z - CHESS_ROAD_CENTER_ROW) * CHESS_ROAD_TILE_SIZE;
+          const tileCoord = makeTileCoord(x, z);
           tile.userData = {
             originalX,
             originalZ,
+            tileCoord,
             dropDist: Math.random() * 40 + 20,
             isDark,
+            assemblyProgress: 0,
+            revealProgress: 0,
             emissiveColor: new THREE.Color(isDark ? 0x2d1710 : 0x755a3c),
           };
           boardTiles.push(tile);
+          boardTileLookup.set(getTileCoordKey(tileCoord), tile);
           boardGroup.add(tile);
         }
       }
@@ -659,6 +762,25 @@ const ChessTreadmill = ({ headerHeight }) => {
       modelRoot.scale.setScalar(scale);
     }
 
+    const ownerSurfaceProfile = {
+      roughness: 0.24,
+      metalness: 0.04,
+      clearcoat: 0.76,
+      clearcoatRoughness: 0.16,
+      envMapIntensity: 1.28,
+      specularIntensity: 0.62,
+      specularColor: new THREE.Color(0xf6efe6),
+    };
+    const riskSurfaceProfile = {
+      roughness: 0.31,
+      metalness: 0.08,
+      clearcoat: 0.66,
+      clearcoatRoughness: 0.2,
+      envMapIntensity: 1.18,
+      specularIntensity: 0.66,
+      specularColor: new THREE.Color(0xf4d4cc),
+    };
+
     function createPieceInstance(pieceType) {
       const ownerSource = ownerPieceNodes[pieceType];
       const riskSource = riskPieceNodes[pieceType];
@@ -677,26 +799,53 @@ const ChessTreadmill = ({ headerHeight }) => {
       });
 
       ownerMeshes.forEach((mesh, index) => {
+        mesh.geometry = mesh.geometry.clone();
+        mesh.geometry.computeVertexNormals();
+        mesh.geometry.normalizeNormals();
+
         const sourceMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
         const riskMesh = riskMeshes[index] ?? riskMeshes[0];
         const riskMaterials = riskMesh ? (Array.isArray(riskMesh.material) ? riskMesh.material : [riskMesh.material]) : sourceMaterials;
         const instanceMaterials = sourceMaterials.map((material, materialIndex) => {
-          const clonedMaterial = material.clone();
-          clonedMaterial.transparent = true;
-          clonedMaterial.depthWrite = true;
-
           const ownerColor = material.color ? material.color.clone() : new THREE.Color(COLOR_WHITE);
           const riskColor = riskMaterials[materialIndex]?.color ? riskMaterials[materialIndex].color.clone() : ownerColor.clone();
 
           if (!mesh.userData.themeMaterials) mesh.userData.themeMaterials = [];
-          mesh.userData.themeMaterials[materialIndex] = { ownerColor, riskColor };
+          mesh.userData.themeMaterials[materialIndex] = {
+            ownerColor,
+            riskColor,
+            ownerSurface: ownerSurfaceProfile,
+            riskSurface: riskSurfaceProfile,
+          };
 
           const initialMix = currentMode === 'risk' ? 1 : 0;
-          if (clonedMaterial.color) {
-            clonedMaterial.color.copy(ownerColor).lerp(riskColor, initialMix);
-          }
+          const blendedColor = ownerColor.clone().lerp(riskColor, initialMix);
+          const blendedSpecular = ownerSurfaceProfile.specularColor.clone().lerp(riskSurfaceProfile.specularColor, initialMix);
 
-          return clonedMaterial;
+          const premiumMaterial = new THREE.MeshPhysicalMaterial({
+            color: blendedColor,
+            map: material.map ?? null,
+            normalMap: material.normalMap ?? null,
+            aoMap: material.aoMap ?? null,
+            alphaMap: material.alphaMap ?? null,
+            roughnessMap: material.roughnessMap ?? null,
+            metalnessMap: material.metalnessMap ?? null,
+            transparent: true,
+            opacity: 1,
+            side: material.side ?? THREE.FrontSide,
+            roughness: THREE.MathUtils.lerp(ownerSurfaceProfile.roughness, riskSurfaceProfile.roughness, initialMix),
+            metalness: THREE.MathUtils.lerp(ownerSurfaceProfile.metalness, riskSurfaceProfile.metalness, initialMix),
+            clearcoat: THREE.MathUtils.lerp(ownerSurfaceProfile.clearcoat, riskSurfaceProfile.clearcoat, initialMix),
+            clearcoatRoughness: THREE.MathUtils.lerp(ownerSurfaceProfile.clearcoatRoughness, riskSurfaceProfile.clearcoatRoughness, initialMix),
+            envMapIntensity: THREE.MathUtils.lerp(ownerSurfaceProfile.envMapIntensity, riskSurfaceProfile.envMapIntensity, initialMix),
+            specularIntensity: THREE.MathUtils.lerp(ownerSurfaceProfile.specularIntensity, riskSurfaceProfile.specularIntensity, initialMix),
+            specularColor: blendedSpecular,
+            ior: 1.46,
+            reflectivity: 0.7,
+            dithering: true,
+          });
+
+          return premiumMaterial;
         });
 
         mesh.material = Array.isArray(mesh.material) ? instanceMaterials : instanceMaterials[0];
@@ -719,18 +868,32 @@ const ChessTreadmill = ({ headerHeight }) => {
       return pieceGroup;
     }
 
-    function placePiece(pieceType, logicalX, logicalZ, uiData, positionOffset = null) {
+    function placePiece(pieceType, uiData, placementOptions = {}) {
       const meshGroup = createPieceInstance(pieceType);
       if (!meshGroup) return;
 
+      const boardCoord = placementOptions.boardCoord ? cloneTileCoord(placementOptions.boardCoord) : null;
+      const basePosition = boardCoord
+        ? tileCoordToLogicalPosition(boardCoord.column, boardCoord.row)
+        : {
+            logicalX: placementOptions.logicalX ?? 0,
+            logicalZ: placementOptions.logicalZ ?? 0,
+          };
+      const resolvedSupportTileCoords = (placementOptions.supportTileCoords ?? [boardCoord ?? getNearestTileCoord(basePosition.logicalX, basePosition.logicalZ)])
+        .filter(Boolean)
+        .map(cloneTileCoord);
+
       meshGroup.userData = {
         ...meshGroup.userData,
-        logicalX,
-        logicalZ,
+        logicalX: basePosition.logicalX,
+        logicalZ: basePosition.logicalZ,
+        boardCoord,
+        supportTileCoords: resolvedSupportTileCoords,
         uiData,
-        positionOffset: positionOffset ? new THREE.Vector3(...positionOffset) : null,
+        positionOffset: placementOptions.positionOffset ? new THREE.Vector3(...placementOptions.positionOffset) : null,
         floatOffset: Math.random() * Math.PI * 2,
         floatSpeed: 0.001 + Math.random() * 0.0015,
+        revealProgress: 0,
         dropDist: 0,
       };
 
@@ -738,50 +901,89 @@ const ChessTreadmill = ({ headerHeight }) => {
       scene.add(meshGroup);
     }
 
+    function getPieceSupportReveal(piece, pathScroll) {
+      const supportTileCoords = piece.userData.supportTileCoords;
+      if (!supportTileCoords?.length) {
+        return getBoardAssemblyProgress(piece.userData.logicalX - pathScroll);
+      }
+
+      let revealTotal = 0;
+      supportTileCoords.forEach((coord) => {
+        const tile = boardTileLookup.get(getTileCoordKey(coord));
+        if (tile) {
+          revealTotal += tile.userData.assemblyProgress ?? getBoardAssemblyProgress(tile.userData.originalX - pathScroll);
+        } else {
+          const supportPosition = tileCoordToLogicalPosition(coord.column, coord.row);
+          revealTotal += getBoardAssemblyProgress(supportPosition.logicalX - pathScroll);
+        }
+      });
+
+      return revealTotal / supportTileCoords.length;
+    }
+
+    function getPieceRevealProgress(piece, pathScroll) {
+      const currentX = piece.userData.logicalX - pathScroll;
+      const supportReveal = smoothstep(0.72, 0.96, getPieceSupportReveal(piece, pathScroll));
+      return getUnifiedFade(currentX) * introState.p * supportReveal;
+    }
+
     function populatePieces() {
-      placePiece('king', 4, 0, buildPieceUiData('king', {
+      placePiece('king', buildPieceUiData('king', {
         whiteHeading: 'Owner Proxy',
         redHeading: 'Risk Proxy',
         whiteSub: 'Goal: maximize profit',
         redSub: 'Goal: maximize loss',
-      }));
+      }), {
+        logicalX: 4,
+        logicalZ: 0,
+      });
 
-      placePiece('bishop', 30, -5.75, buildPieceUiData('bishop', {
+      placePiece('bishop', buildPieceUiData('bishop', {
         whiteHeading: 'BUREAUCRACY',
         redHeading: 'BUREAUCRACY',
         whiteSub: 'Mitigate liability/ red tape',
         redSub: 'Increase liability/ red tape',
-      }));
+      }), {
+        logicalX: 30,
+        logicalZ: -5.75,
+      });
 
-      placePiece('rook', 30, 0, buildPieceUiData('rook', {
+      placePiece('rook', buildPieceUiData('rook', {
         whiteHeading: 'STRUCTURAL',
         redHeading: 'STRUCTURAL',
         whiteSub: 'Maintain & enhance',
         redSub: 'Deterioration',
-      }));
+      }), {
+        logicalX: 30,
+        logicalZ: 0,
+      });
 
-      placePiece('knight', 30, 5.75, buildPieceUiData('knight', {
+      placePiece('knight', buildPieceUiData('knight', {
         whiteHeading: 'LEASING',
         redHeading: 'LEASING',
         whiteSub: 'Synergistic occupancy',
         redSub: 'High Vacancy',
-      }));
+      }), {
+        logicalX: 30,
+        logicalZ: 5.75,
+      });
 
-      const queenX = 60;
-      const queenZ = 0;
+      const queenBoardCoord = makeTileCoord(17, CHESS_ROAD_CENTER_ROW);
 
-      placePiece('queen', queenX, queenZ, buildPieceUiData('queen', {
+      placePiece('queen', buildPieceUiData('queen', {
         whiteHeading: 'ECONOMY',
         redHeading: 'ECONOMY',
         whiteSub: 'STRONG MARKET',
         redSub: '[HARSH MARKET]',
-      }));
+      }), {
+        boardCoord: queenBoardCoord,
+      });
 
-      const pawnOffsets = [
-        [-3.15, 0, -3.1],
-        [3.15, 0, -3.1],
-        [-3.15, 0, 3.1],
-        [3.15, 0, 3.1],
+      const pawnTileOffsets = [
+        [-1, -1],
+        [-1, 1],
+        [1, -1],
+        [1, 1],
       ];
       const pawnData = buildPieceUiData('pawn', {
         whiteHeading: 'TIMING',
@@ -790,8 +992,13 @@ const ChessTreadmill = ({ headerHeight }) => {
         redSub: '[via pawn differential]\nMore pressure to sell',
       });
 
-      pawnOffsets.forEach((positionOffset) => {
-        placePiece('pawn', queenX, queenZ, pawnData, positionOffset);
+      pawnTileOffsets.forEach(([columnOffset, rowOffset]) => {
+        placePiece('pawn', pawnData, {
+          boardCoord: makeTileCoord(
+            queenBoardCoord.column + columnOffset,
+            queenBoardCoord.row + rowOffset,
+          ),
+        });
       });
     }
 
@@ -881,9 +1088,14 @@ const ChessTreadmill = ({ headerHeight }) => {
 
         const uniquePieces = [];
         const headingsSeen = new Set();
+        const currentPathScroll = Math.min(scrollPos, 65);
 
         interactivePieces.forEach((piece) => {
-          if (piece.userData.uiData && !headingsSeen.has(piece.userData.uiData.whiteHeading)) {
+          if (
+            piece.userData.uiData &&
+            getPieceRevealProgress(piece, currentPathScroll) > 0.2 &&
+            !headingsSeen.has(piece.userData.uiData.whiteHeading)
+          ) {
             headingsSeen.add(piece.userData.uiData.whiteHeading);
             uniquePieces.push(piece);
           }
@@ -999,6 +1211,9 @@ const ChessTreadmill = ({ headerHeight }) => {
 
     const pieceOffsetEuler = new THREE.Euler();
     const pieceOffsetVector = new THREE.Vector3();
+    const pieceColorScratch = new THREE.Color();
+    const pieceHighlightScratch = new THREE.Color();
+    const pieceSpecularScratch = new THREE.Color();
 
     const animate = () => {
       if (disposed || !isVisible) {
@@ -1018,8 +1233,7 @@ const ChessTreadmill = ({ headerHeight }) => {
         const hitMeshes = [];
 
         interactivePieces.forEach((piece) => {
-          const currentX = piece.userData.logicalX - pathScroll;
-          if (getUnifiedFade(currentX) > 0.1) {
+          if (getPieceRevealProgress(piece, pathScroll) > 0.18) {
             piece.traverse((child) => {
               if (child.isMesh) hitMeshes.push(child);
             });
@@ -1043,7 +1257,10 @@ const ChessTreadmill = ({ headerHeight }) => {
         tile.rotation.set(transform.rx, transform.ry, transform.rz);
 
         const fade = getUnifiedFade(currentX);
+        const assemblyProgress = getBoardAssemblyProgress(currentX);
         const centerFocus = getCenterFocus(currentX, 8.75);
+        tile.userData.assemblyProgress = assemblyProgress;
+        tile.userData.revealProgress = fade * introState.p;
         tile.material.opacity = fade * introState.p;
         if ('emissive' in tile.material && tile.material.emissive) {
           tile.material.emissive.copy(tile.userData.emissiveColor);
@@ -1059,7 +1276,9 @@ const ChessTreadmill = ({ headerHeight }) => {
         const currentX = piece.userData.logicalX - pathScroll;
         const transform = get4DTransform(currentX, piece.userData.logicalZ);
         const centerFocus = getCenterFocus(currentX, 8.25);
+        const pieceReveal = getPieceRevealProgress(piece, pathScroll);
         const bobbing = Math.sin(time * piece.userData.floatSpeed + piece.userData.floatOffset) * PIECE_BOB_AMPLITUDE;
+        piece.userData.revealProgress = pieceReveal;
 
         piece.position.set(transform.x, transform.y + PIECE_BASE_LIFT + bobbing, transform.z);
         piece.rotation.set(transform.rx, transform.ry, transform.rz);
@@ -1068,6 +1287,7 @@ const ChessTreadmill = ({ headerHeight }) => {
           pieceOffsetVector.copy(piece.userData.positionOffset).applyEuler(pieceOffsetEuler);
           piece.position.add(pieceOffsetVector);
         }
+        piece.visible = pieceReveal > 0.005;
         piece.userData.themeMix += (piece.userData.targetThemeMix - piece.userData.themeMix) * 0.08;
 
         let isFocused = currentHoveredUUID === piece.uuid;
@@ -1082,30 +1302,62 @@ const ChessTreadmill = ({ headerHeight }) => {
         const targetScale = isFocused ? 1.2 : 1.0;
         piece.scale.lerp(new THREE.Vector3(targetScale, targetScale, targetScale), 0.15);
 
-        if (centerFocus > featuredStrength) {
+        if (pieceReveal > 0.15 && centerFocus > featuredStrength) {
           featuredStrength = centerFocus;
           featuredPiece = piece;
         }
 
-        const fade = getUnifiedFade(currentX);
         piece.traverse((child) => {
           if (child.isMesh && child.userData.themeMaterials) {
             const materials = Array.isArray(child.material) ? child.material : [child.material];
             materials.forEach((material, index) => {
               const themeMaterial = child.userData.themeMaterials[index] ?? child.userData.themeMaterials[0];
               if (material.color && themeMaterial) {
-                material.color.copy(themeMaterial.ownerColor).lerp(themeMaterial.riskColor, piece.userData.themeMix);
-                material.color.lerp(centerHighlightColor, centerFocus * 0.06);
+                pieceColorScratch.copy(themeMaterial.ownerColor).lerp(themeMaterial.riskColor, piece.userData.themeMix);
+                pieceHighlightScratch.copy(centerHighlightWarm).lerp(centerHighlightCool, clamp01((piece.position.z + 7) / 14));
+                material.color.copy(pieceColorScratch).lerp(pieceHighlightScratch, centerFocus * 0.048 + (isFocused ? 0.075 : 0));
+
+                const ownerSurface = themeMaterial.ownerSurface;
+                const riskSurface = themeMaterial.riskSurface;
+                material.roughness = Math.max(
+                  0.14,
+                  THREE.MathUtils.lerp(ownerSurface.roughness, riskSurface.roughness, piece.userData.themeMix) - centerFocus * 0.06 - (isFocused ? 0.04 : 0),
+                );
+                material.metalness = Math.min(
+                  0.18,
+                  THREE.MathUtils.lerp(ownerSurface.metalness, riskSurface.metalness, piece.userData.themeMix) + centerFocus * 0.03,
+                );
+                material.clearcoat = Math.min(
+                  1,
+                  THREE.MathUtils.lerp(ownerSurface.clearcoat, riskSurface.clearcoat, piece.userData.themeMix) + centerFocus * 0.12 + (isFocused ? 0.08 : 0),
+                );
+                material.clearcoatRoughness = Math.max(
+                  0.08,
+                  THREE.MathUtils.lerp(ownerSurface.clearcoatRoughness, riskSurface.clearcoatRoughness, piece.userData.themeMix) - centerFocus * 0.03,
+                );
+                material.envMapIntensity = THREE.MathUtils.lerp(ownerSurface.envMapIntensity, riskSurface.envMapIntensity, piece.userData.themeMix)
+                  + centerFocus * 0.34
+                  + (isFocused ? 0.16 : 0);
+                material.specularIntensity = Math.min(
+                  1,
+                  THREE.MathUtils.lerp(ownerSurface.specularIntensity, riskSurface.specularIntensity, piece.userData.themeMix) + centerFocus * 0.08,
+                );
+                pieceSpecularScratch.copy(ownerSurface.specularColor).lerp(riskSurface.specularColor, piece.userData.themeMix);
+                material.specularColor.copy(pieceSpecularScratch);
               }
-              if ('emissive' in material && material.emissive) {
-                material.emissive.copy(material.color ?? centerHighlightColor);
-                material.emissiveIntensity = 0.015 + centerFocus * 0.17 + (isFocused ? 0.06 : 0);
-              }
-              material.opacity = fade * introState.p;
+              material.opacity = pieceReveal;
+              material.depthWrite = pieceReveal > 0.06;
             });
           }
         });
       });
+
+      if (currentHoveredUUID !== null) {
+        const activePiece = interactivePieces.find((piece) => piece.uuid === currentHoveredUUID);
+        if (!activePiece || activePiece.userData.revealProgress <= 0.05) {
+          pushActivePieceToReact(null);
+        }
+      }
 
       if (featuredPiece) {
         spotlightWorldTarget.copy(featuredPiece.position);
@@ -1119,10 +1371,18 @@ const ChessTreadmill = ({ headerHeight }) => {
 
         centerSpotLight.position.lerp(spotlightWorldPosition, 0.12);
         centerSpotLight.target.position.lerp(spotlightWorldTarget, 0.18);
-        centerSpotLight.intensity += ((0.58 + featuredStrength * 1.65) - centerSpotLight.intensity) * 0.12;
+        keyShadowLight.target.position.lerp(spotlightWorldTarget, 0.06);
+        warmRimLight.target.position.lerp(spotlightWorldTarget, 0.08);
+        coolRimLight.target.position.lerp(spotlightWorldTarget, 0.08);
+        displayFillLight.lookAt(spotlightWorldTarget);
+        sideFillLight.lookAt(spotlightWorldTarget);
+        centerSpotLight.intensity += ((0.76 + featuredStrength * 1.4) - centerSpotLight.intensity) * 0.12;
       } else {
-        centerSpotLight.intensity += (0.58 - centerSpotLight.intensity) * 0.12;
+        centerSpotLight.intensity += (0.72 - centerSpotLight.intensity) * 0.12;
       }
+      keyShadowLight.target.updateMatrixWorld();
+      warmRimLight.target.updateMatrixWorld();
+      coolRimLight.target.updateMatrixWorld();
       centerSpotLight.target.updateMatrixWorld();
 
       renderer.render(scene, camera);
@@ -1163,6 +1423,8 @@ const ChessTreadmill = ({ headerHeight }) => {
           materials.forEach((material) => material.dispose());
         }
       });
+      environmentTarget.dispose();
+      pmremGenerator.dispose();
       if (currentMount.contains(renderer.domElement)) {
         currentMount.removeChild(renderer.domElement);
       }
@@ -1170,6 +1432,7 @@ const ChessTreadmill = ({ headerHeight }) => {
       renderer.dispose();
       scene.clear();
       boardTiles = [];
+      boardTileLookup = new Map();
       interactivePieces = [];
     };
   }, []);
@@ -1215,15 +1478,16 @@ const ChessTreadmill = ({ headerHeight }) => {
 
         <div
           id="section2-hint"
-          className={`absolute bottom-10 left-10 text-white text-sm uppercase tracking-[0.2em] font-bold flex items-center transition-opacity duration-300 z-10 pointer-events-none drop-shadow-lg ${
+          className={`pointer-events-none absolute bottom-10 left-10 z-10 transition-opacity duration-300 ${
             showHints ? 'opacity-100' : 'opacity-0'
           }`}
         >
-          <span className="inline-flex items-center border-2 border-white rounded px-2.5 py-1.5 mr-3 bg-white/20 text-white font-extrabold drop-shadow">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="mr-2"><line x1="2" y1="12" x2="22" y2="12"></line><polyline points="15 5 22 12 15 19"></polyline><line x1="2" y1="5" x2="2" y2="19"></line></svg>
-            TAB
-          </span>
-          TOGGLE VIEW
+          <div className="flex flex-col items-center gap-3 text-white">
+            <AnimatedTabHint />
+            <span className="text-[11px] font-bold uppercase tracking-[0.34em] drop-shadow-lg md:text-sm">
+              TOGGLE VIEW
+            </span>
+          </div>
         </div>
 
         <div
