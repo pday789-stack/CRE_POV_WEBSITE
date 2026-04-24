@@ -57,29 +57,31 @@ const SCROLL_SETTLE_EPSILON = 0.004;
 const PIECE_MATERIAL_PROFILES = {
   owner: {
     color: '#F3F2EE',
-    roughness: 0.12,
-    metalness: 0.02,
-    clearcoat: 0.9,
-    clearcoatRoughness: 0.09,
-    reflectivity: 0.54,
-    envMapIntensity: 1.08,
-    specularIntensity: 0.74,
-    specularColor: '#F8FBFF',
-    emissive: '#E7EFF8',
-    emissiveIntensity: 0.045,
+    fillColor: '#DDEEFF',
+    rimColor: '#FFFFFF',
+    lineColor: '#F4FAFF',
+    coreOpacity: 0.46,
+    rimOpacity: 0.3,
+    lineOpacity: 0.26,
+    rimStrength: 1.02,
+    lineStrength: 0.86,
+    verticalStrength: 0.28,
+    ringDensity: 4.05,
+    verticalDensity: 18,
   },
   risk: {
     color: '#97182E',
-    roughness: 0.11,
-    metalness: 0.02,
-    clearcoat: 0.92,
-    clearcoatRoughness: 0.08,
-    reflectivity: 0.6,
-    envMapIntensity: 1.14,
-    specularIntensity: 0.8,
-    specularColor: '#F0BEC7',
-    emissive: '#4B0718',
-    emissiveIntensity: 0.09,
+    fillColor: '#C82742',
+    rimColor: '#FF7C8A',
+    lineColor: '#FF5268',
+    coreOpacity: 0.5,
+    rimOpacity: 0.34,
+    lineOpacity: 0.3,
+    rimStrength: 1.08,
+    lineStrength: 0.92,
+    verticalStrength: 0.3,
+    ringDensity: 4.05,
+    verticalDensity: 18,
   },
 };
 
@@ -112,60 +114,281 @@ const formatVectorForDebug = (vector) => ({
 
 const getRenderPixelRatio = () => Math.min(window.devicePixelRatio || 1, MAX_RENDER_DPR);
 
-const createHolographicPieceMaterial = (sourceMaterial, initialMix = 0) => {
-  const material = new THREE.MeshPhysicalMaterial({
-    color: PIECE_MATERIAL_PROFILES.owner.color,
-    roughness: PIECE_MATERIAL_PROFILES.owner.roughness,
-    metalness: PIECE_MATERIAL_PROFILES.owner.metalness,
-    clearcoat: PIECE_MATERIAL_PROFILES.owner.clearcoat,
-    clearcoatRoughness: PIECE_MATERIAL_PROFILES.owner.clearcoatRoughness,
-    reflectivity: PIECE_MATERIAL_PROFILES.owner.reflectivity,
-    envMapIntensity: PIECE_MATERIAL_PROFILES.owner.envMapIntensity,
-    specularIntensity: PIECE_MATERIAL_PROFILES.owner.specularIntensity,
-    specularColor: PIECE_MATERIAL_PROFILES.owner.specularColor,
-    emissive: PIECE_MATERIAL_PROFILES.owner.emissive,
-    emissiveIntensity: PIECE_MATERIAL_PROFILES.owner.emissiveIntensity,
-    transparent: false,
-    opacity: 1,
-    side: sourceMaterial?.side ?? THREE.FrontSide,
-    dithering: true,
-  });
+const createProfileColors = (profile) => ({
+  color: new THREE.Color(profile.color),
+  fillColor: new THREE.Color(profile.fillColor),
+  rimColor: new THREE.Color(profile.rimColor),
+  lineColor: new THREE.Color(profile.lineColor),
+});
+
+const HOLOGRAPHIC_VERTEX_SHADER = `
+  varying vec3 vPiecePosition;
+  varying vec3 vWorldNormal;
+  varying vec3 vViewDirection;
+
+  void main() {
+    vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+    vPiecePosition = position;
+    vWorldNormal = normalize(mat3(modelMatrix) * normal);
+    vViewDirection = normalize(cameraPosition - worldPosition.xyz);
+    gl_Position = projectionMatrix * viewMatrix * worldPosition;
+  }
+`;
+
+const HOLOGRAPHIC_SHADER_UTILS = `
+  float lineFromCoord(float coord, float width, float softness) {
+    float centered = abs(fract(coord) - 0.5);
+    return 1.0 - smoothstep(width, width + softness, centered);
+  }
+
+  float hologramRings(vec3 piecePosition, float ringDensity) {
+    return lineFromCoord(piecePosition.y * ringDensity, 0.018, 0.026);
+  }
+
+  float hologramVerticals(vec3 piecePosition, float verticalDensity) {
+    float radius = length(piecePosition.xz);
+    float angular = (atan(piecePosition.z, piecePosition.x) + 3.14159265) / 6.2831853;
+    float verticalLine = lineFromCoord(angular * verticalDensity, 0.017, 0.03);
+    return verticalLine * smoothstep(0.18, 0.7, radius);
+  }
+`;
+
+const HOLOGRAPHIC_CORE_FRAGMENT_SHADER = `
+  uniform vec3 uColor;
+  uniform vec3 uFillColor;
+  uniform vec3 uRimColor;
+  uniform vec3 uLineColor;
+  uniform float uOpacity;
+  uniform float uRimStrength;
+  uniform float uLineStrength;
+  uniform float uRingDensity;
+  uniform float uVerticalDensity;
+  uniform float uVerticalStrength;
+  varying vec3 vPiecePosition;
+  varying vec3 vWorldNormal;
+  varying vec3 vViewDirection;
+
+  ${HOLOGRAPHIC_SHADER_UTILS}
+
+  void main() {
+    vec3 normalDirection = normalize(vWorldNormal);
+    vec3 viewDirection = normalize(vViewDirection);
+    float facing = abs(dot(normalDirection, viewDirection));
+    float fresnel = pow(1.0 - clamp(facing, 0.0, 1.0), 2.35);
+    float surface = pow(clamp(facing, 0.0, 1.0), 0.58);
+    float rings = hologramRings(vPiecePosition, uRingDensity);
+    float verticals = hologramVerticals(vPiecePosition, uVerticalDensity) * uVerticalStrength;
+    float lineMask = max(rings * 0.52, verticals * 0.34);
+
+    vec3 bodyColor = mix(uFillColor * 0.42, uColor, 0.72 + surface * 0.18);
+    vec3 finalColor = bodyColor * (0.38 + surface * 0.34);
+    finalColor += uRimColor * fresnel * uRimStrength * 0.48;
+    finalColor += uLineColor * lineMask * uLineStrength * 0.28;
+
+    float alpha = uOpacity * (0.72 + surface * 0.16);
+    alpha += fresnel * uOpacity * uRimStrength * 0.2;
+    alpha += lineMask * uOpacity * uLineStrength * 0.08;
+
+    if (alpha < 0.01) discard;
+    gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 0.72));
+  }
+`;
+
+const HOLOGRAPHIC_RIM_FRAGMENT_SHADER = `
+  uniform vec3 uRimColor;
+  uniform float uOpacity;
+  uniform float uRimPower;
+  uniform float uRimStrength;
+  varying vec3 vWorldNormal;
+  varying vec3 vViewDirection;
+
+  void main() {
+    float facing = abs(dot(normalize(vWorldNormal), normalize(vViewDirection)));
+    float fresnel = pow(1.0 - clamp(facing, 0.0, 1.0), uRimPower);
+    float rim = smoothstep(0.2, 0.96, fresnel);
+    float alpha = rim * uOpacity * uRimStrength;
+
+    if (alpha < 0.004) discard;
+    gl_FragColor = vec4(uRimColor * (0.88 + rim * 0.42), clamp(alpha, 0.0, 0.78));
+  }
+`;
+
+const HOLOGRAPHIC_LINE_FRAGMENT_SHADER = `
+  uniform vec3 uLineColor;
+  uniform float uOpacity;
+  uniform float uLineStrength;
+  uniform float uRingDensity;
+  uniform float uVerticalDensity;
+  uniform float uVerticalStrength;
+  varying vec3 vPiecePosition;
+  varying vec3 vWorldNormal;
+  varying vec3 vViewDirection;
+
+  ${HOLOGRAPHIC_SHADER_UTILS}
+
+  void main() {
+    float facing = abs(dot(normalize(vWorldNormal), normalize(vViewDirection)));
+    float fresnel = pow(1.0 - clamp(facing, 0.0, 1.0), 1.65);
+    float rings = hologramRings(vPiecePosition, uRingDensity);
+    float verticals = hologramVerticals(vPiecePosition, uVerticalDensity) * uVerticalStrength;
+    float lineMask = max(rings, verticals);
+    lineMask *= 0.74 + fresnel * 0.56;
+
+    float alpha = lineMask * uOpacity * uLineStrength;
+    if (alpha < 0.004) discard;
+    gl_FragColor = vec4(uLineColor * (0.74 + fresnel * 0.58), clamp(alpha, 0.0, 0.62));
+  }
+`;
+
+const attachHologramProfiles = (material, layer) => {
+  material.userData.hologramLayer = layer;
   material.userData.ownerProfile = {
     ...PIECE_MATERIAL_PROFILES.owner,
-    color: new THREE.Color(PIECE_MATERIAL_PROFILES.owner.color),
-    specularColor: new THREE.Color(PIECE_MATERIAL_PROFILES.owner.specularColor),
-    emissive: new THREE.Color(PIECE_MATERIAL_PROFILES.owner.emissive),
+    ...createProfileColors(PIECE_MATERIAL_PROFILES.owner),
   };
   material.userData.riskProfile = {
     ...PIECE_MATERIAL_PROFILES.risk,
-    color: new THREE.Color(PIECE_MATERIAL_PROFILES.risk.color),
-    specularColor: new THREE.Color(PIECE_MATERIAL_PROFILES.risk.specularColor),
-    emissive: new THREE.Color(PIECE_MATERIAL_PROFILES.risk.emissive),
+    ...createProfileColors(PIECE_MATERIAL_PROFILES.risk),
   };
-  syncHolographicPieceMaterial(material, initialMix, 1);
+};
+
+const lerpProfileValue = (ownerProfile, riskProfile, key, themeMix) =>
+  THREE.MathUtils.lerp(ownerProfile[key], riskProfile[key], themeMix);
+
+const createHolographicPieceMaterial = (sourceMaterial, initialMix = 0) => {
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uColor: { value: new THREE.Color(PIECE_MATERIAL_PROFILES.owner.color) },
+      uFillColor: { value: new THREE.Color(PIECE_MATERIAL_PROFILES.owner.fillColor) },
+      uRimColor: { value: new THREE.Color(PIECE_MATERIAL_PROFILES.owner.rimColor) },
+      uLineColor: { value: new THREE.Color(PIECE_MATERIAL_PROFILES.owner.lineColor) },
+      uOpacity: { value: PIECE_MATERIAL_PROFILES.owner.coreOpacity },
+      uRimStrength: { value: PIECE_MATERIAL_PROFILES.owner.rimStrength },
+      uLineStrength: { value: PIECE_MATERIAL_PROFILES.owner.lineStrength },
+      uRingDensity: { value: PIECE_MATERIAL_PROFILES.owner.ringDensity },
+      uVerticalDensity: { value: PIECE_MATERIAL_PROFILES.owner.verticalDensity },
+      uVerticalStrength: { value: PIECE_MATERIAL_PROFILES.owner.verticalStrength },
+    },
+    vertexShader: HOLOGRAPHIC_VERTEX_SHADER,
+    fragmentShader: HOLOGRAPHIC_CORE_FRAGMENT_SHADER,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.NormalBlending,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  attachHologramProfiles(material, 'core');
+  syncHolographicPieceMaterial(material, initialMix, 1, 0);
   material.needsUpdate = true;
   return material;
 };
 
-function syncHolographicPieceMaterial(material, themeMix, opacity) {
+const createHolographicRimMaterial = (initialMix = 0) => {
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uRimColor: { value: new THREE.Color(PIECE_MATERIAL_PROFILES.owner.rimColor) },
+      uOpacity: { value: PIECE_MATERIAL_PROFILES.owner.rimOpacity },
+      uRimPower: { value: 2.05 },
+      uRimStrength: { value: PIECE_MATERIAL_PROFILES.owner.rimStrength },
+    },
+    vertexShader: HOLOGRAPHIC_VERTEX_SHADER,
+    fragmentShader: HOLOGRAPHIC_RIM_FRAGMENT_SHADER,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+    side: THREE.FrontSide,
+    toneMapped: false,
+  });
+  attachHologramProfiles(material, 'rim');
+  syncHolographicOverlayMaterial(material, initialMix, 1, 0, 'rim');
+  return material;
+};
+
+const createHolographicLineMaterial = (initialMix = 0) => {
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      uLineColor: { value: new THREE.Color(PIECE_MATERIAL_PROFILES.owner.lineColor) },
+      uOpacity: { value: PIECE_MATERIAL_PROFILES.owner.lineOpacity },
+      uLineStrength: { value: PIECE_MATERIAL_PROFILES.owner.lineStrength },
+      uRingDensity: { value: PIECE_MATERIAL_PROFILES.owner.ringDensity },
+      uVerticalDensity: { value: PIECE_MATERIAL_PROFILES.owner.verticalDensity },
+      uVerticalStrength: { value: PIECE_MATERIAL_PROFILES.owner.verticalStrength },
+    },
+    vertexShader: HOLOGRAPHIC_VERTEX_SHADER,
+    fragmentShader: HOLOGRAPHIC_LINE_FRAGMENT_SHADER,
+    transparent: true,
+    depthWrite: false,
+    depthTest: true,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  attachHologramProfiles(material, 'line');
+  syncHolographicOverlayMaterial(material, initialMix, 1, 0, 'line');
+  return material;
+};
+
+function syncHolographicPieceMaterial(material, themeMix, opacity, focusBoost = 0) {
   const ownerProfile = material.userData.ownerProfile;
   const riskProfile = material.userData.riskProfile;
   if (!ownerProfile || !riskProfile) return;
 
-  material.color.copy(ownerProfile.color).lerp(riskProfile.color, themeMix);
-  material.specularColor.copy(ownerProfile.specularColor).lerp(riskProfile.specularColor, themeMix);
-  material.emissive.copy(ownerProfile.emissive).lerp(riskProfile.emissive, themeMix);
-  material.roughness = THREE.MathUtils.lerp(ownerProfile.roughness, riskProfile.roughness, themeMix);
-  material.metalness = THREE.MathUtils.lerp(ownerProfile.metalness, riskProfile.metalness, themeMix);
-  material.clearcoat = THREE.MathUtils.lerp(ownerProfile.clearcoat, riskProfile.clearcoat, themeMix);
-  material.clearcoatRoughness = THREE.MathUtils.lerp(ownerProfile.clearcoatRoughness, riskProfile.clearcoatRoughness, themeMix);
-  material.reflectivity = THREE.MathUtils.lerp(ownerProfile.reflectivity, riskProfile.reflectivity, themeMix);
-  material.envMapIntensity = THREE.MathUtils.lerp(ownerProfile.envMapIntensity, riskProfile.envMapIntensity, themeMix);
-  material.specularIntensity = THREE.MathUtils.lerp(ownerProfile.specularIntensity, riskProfile.specularIntensity, themeMix);
-  material.emissiveIntensity = THREE.MathUtils.lerp(ownerProfile.emissiveIntensity, riskProfile.emissiveIntensity, themeMix);
-  material.opacity = opacity;
-  material.transparent = opacity < 0.995;
-  material.depthWrite = opacity > 0.84;
+  const positiveFocus = Math.max(0, focusBoost);
+  const negativeFocus = Math.min(0, focusBoost);
+  const visibility = clamp01(opacity);
+  const strengthScale = Math.max(0.58, 1 + positiveFocus * 0.18 + negativeFocus * 0.34);
+
+  material.uniforms.uColor.value.copy(ownerProfile.color).lerp(riskProfile.color, themeMix);
+  material.uniforms.uFillColor.value.copy(ownerProfile.fillColor).lerp(riskProfile.fillColor, themeMix);
+  material.uniforms.uRimColor.value.copy(ownerProfile.rimColor).lerp(riskProfile.rimColor, themeMix);
+  material.uniforms.uLineColor.value.copy(ownerProfile.lineColor).lerp(riskProfile.lineColor, themeMix);
+  material.uniforms.uOpacity.value = lerpProfileValue(ownerProfile, riskProfile, 'coreOpacity', themeMix)
+    * visibility
+    * Math.max(0.76, 1 + positiveFocus * 0.08 + negativeFocus * 0.18);
+  material.uniforms.uRimStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'rimStrength', themeMix)
+    * strengthScale;
+  material.uniforms.uLineStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'lineStrength', themeMix)
+    * Math.max(0.62, 1 + positiveFocus * 0.16 + negativeFocus * 0.3);
+  material.uniforms.uRingDensity.value = lerpProfileValue(ownerProfile, riskProfile, 'ringDensity', themeMix);
+  material.uniforms.uVerticalDensity.value = lerpProfileValue(ownerProfile, riskProfile, 'verticalDensity', themeMix);
+  material.uniforms.uVerticalStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'verticalStrength', themeMix)
+    * Math.max(0.62, 1 + positiveFocus * 0.12 + negativeFocus * 0.28);
+  material.visible = visibility > 0.01;
+}
+
+function syncHolographicOverlayMaterial(material, themeMix, opacity, focusBoost = 0, overlayType = 'rim') {
+  const ownerProfile = material.userData.ownerProfile;
+  const riskProfile = material.userData.riskProfile;
+  if (!ownerProfile || !riskProfile) return;
+
+  const positiveFocus = Math.max(0, focusBoost);
+  const negativeFocus = Math.min(0, focusBoost);
+  const visibility = clamp01(opacity);
+  const isLineLayer = overlayType === 'line';
+  const profileOpacityKey = isLineLayer ? 'lineOpacity' : 'rimOpacity';
+  const overlayOpacity = lerpProfileValue(ownerProfile, riskProfile, profileOpacityKey, themeMix)
+    * visibility
+    * Math.max(0.48, 1 + positiveFocus * (isLineLayer ? 0.34 : 0.42) + negativeFocus * (isLineLayer ? 0.38 : 0.48));
+
+  if (overlayType === 'rim') {
+    material.uniforms.uRimColor.value.copy(ownerProfile.rimColor).lerp(riskProfile.rimColor, themeMix);
+    material.uniforms.uOpacity.value = overlayOpacity;
+    material.uniforms.uRimPower.value = THREE.MathUtils.lerp(2.2, 1.72, clamp01(positiveFocus));
+    material.uniforms.uRimStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'rimStrength', themeMix)
+      * Math.max(0.58, 1 + positiveFocus * 0.22 + negativeFocus * 0.38);
+  } else {
+    material.uniforms.uLineColor.value.copy(ownerProfile.lineColor).lerp(riskProfile.lineColor, themeMix);
+    material.uniforms.uOpacity.value = overlayOpacity;
+    material.uniforms.uLineStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'lineStrength', themeMix)
+      * Math.max(0.56, 1 + positiveFocus * 0.24 + negativeFocus * 0.34);
+    material.uniforms.uRingDensity.value = lerpProfileValue(ownerProfile, riskProfile, 'ringDensity', themeMix);
+    material.uniforms.uVerticalDensity.value = lerpProfileValue(ownerProfile, riskProfile, 'verticalDensity', themeMix);
+    material.uniforms.uVerticalStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'verticalStrength', themeMix)
+      * Math.max(0.58, 1 + positiveFocus * 0.12 + negativeFocus * 0.3);
+  }
+  material.visible = visibility > 0.01;
 }
 
 const createSubtleMarbleTexture = ({ baseColor, veinColor, highlightColor, veinOpacity }) => {
@@ -751,6 +974,7 @@ const ChessTreadmill = ({ headerHeight }) => {
     let lastBoardIntroProgress = Infinity;
     let ownerPieceNodes = {};
     let riskPieceNodes = {};
+    let normalizedPiecePrototypes = {};
     let boardTileLookup = new Map();
     let queenPawnFormation = null;
     let lastQueenPawnFormationValidation = 0;
@@ -759,9 +983,9 @@ const ChessTreadmill = ({ headerHeight }) => {
     let isVisible = false;
     let isAnimating = false;
 
-    const COLOR_BOARD_IVORY = '#F3F2EE';
-    const COLOR_BOARD_CHARCOAL = '#1A1A1D';
-    const COLOR_BOARD_EDGE_LIGHT = 0xc9c7be;
+    const COLOR_BOARD_IVORY = '#8B8E8C';
+    const COLOR_BOARD_CHARCOAL = '#111216';
+    const COLOR_BOARD_EDGE_LIGHT = 0x747875;
     const COLOR_BOARD_EDGE_DARK = 0x07070a;
 
     const width = mountRef.current.clientWidth;
@@ -778,10 +1002,9 @@ const ChessTreadmill = ({ headerHeight }) => {
     renderer.setSize(width, height);
     renderer.setPixelRatio(getRenderPixelRatio());
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.enabled = false;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.82;
+    renderer.toneMappingExposure = 0.72;
 
     const currentMount = mountRef.current;
     currentMount.appendChild(renderer.domElement);
@@ -789,28 +1012,26 @@ const ChessTreadmill = ({ headerHeight }) => {
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
     const environmentTarget = pmremGenerator.fromScene(new RoomEnvironment(), 0.04);
     scene.environment = environmentTarget.texture;
-    scene.environmentIntensity = 1.04;
+    scene.environmentIntensity = 0.62;
 
-    const softFillLight = new THREE.HemisphereLight(0xfff7ed, 0x07080d, 0.32);
+    const softFillLight = new THREE.HemisphereLight(0xdce9ff, 0x05060a, 0.16);
     scene.add(softFillLight);
 
-    const keyShadowLight = new THREE.SpotLight(0xfff1df, 1.48, 88, Math.PI / 5.9, 0.86, 1.76);
-    keyShadowLight.position.set(16, 25, 13);
-    keyShadowLight.castShadow = true;
-    keyShadowLight.shadow.mapSize.set(768, 768);
-    keyShadowLight.shadow.bias = -0.00008;
-    keyShadowLight.shadow.normalBias = 0.055;
-    keyShadowLight.shadow.radius = 2.6;
+    const keyShadowLight = new THREE.SpotLight(0xfff1df, 0.38, 86, Math.PI / 6.2, 0.88, 1.82);
+    keyShadowLight.position.set(15, 23, 13);
+    keyShadowLight.castShadow = false;
     keyShadowLight.target.position.set(3.5, 2.6, 0);
     scene.add(keyShadowLight);
     scene.add(keyShadowLight.target);
 
-    const rimLight = new THREE.SpotLight(0xd7e8ff, 0.92, 82, Math.PI / 5.7, 0.9, 1.9);
+    const rimLight = new THREE.SpotLight(0xd7e8ff, 0.52, 82, Math.PI / 5.8, 0.9, 1.9);
     rimLight.position.set(-17, 11.5, -14);
     rimLight.castShadow = false;
     rimLight.target.position.set(2, 2.4, 0);
     scene.add(rimLight);
     scene.add(rimLight.target);
+    const ownerRimLightColor = new THREE.Color(0xe6f7ff);
+    const riskRimLightColor = new THREE.Color(0xff7482);
 
     const loader = new GLTFLoader();
 
@@ -927,16 +1148,16 @@ const ChessTreadmill = ({ headerHeight }) => {
         const material = new THREE.MeshPhysicalMaterial({
           color: 0xffffff,
           map,
-          roughness: isDark ? 0.13 : 0.11,
+          roughness: isDark ? 0.24 : 0.2,
           metalness: 0,
-          clearcoat: 1,
-          clearcoatRoughness: isDark ? 0.055 : 0.045,
-          reflectivity: 0.78,
-          envMapIntensity: isDark ? 1.34 : 1.16,
-          specularIntensity: isDark ? 0.72 : 0.82,
+          clearcoat: 0.72,
+          clearcoatRoughness: isDark ? 0.16 : 0.12,
+          reflectivity: 0.42,
+          envMapIntensity: isDark ? 0.74 : 0.62,
+          specularIntensity: isDark ? 0.34 : 0.38,
           specularColor: isDark ? 0x7a2534 : 0xffe2e6,
           emissive: isDark ? 0x050305 : 0x0a0405,
-          emissiveIntensity: 0.01,
+          emissiveIntensity: 0.004,
           transparent: true,
           opacity: 1,
           dithering: true,
@@ -986,60 +1207,121 @@ const ChessTreadmill = ({ headerHeight }) => {
     }
     createChessRoad();
 
-    function normalizePieceModel(modelRoot, pieceType) {
-      const initialBox = new THREE.Box3().setFromObject(modelRoot);
-      const size = initialBox.getSize(new THREE.Vector3());
+    function createNormalizedPiecePrototype(sourceRoot, pieceType) {
+      if (!sourceRoot) return null;
+
+      sourceRoot.updateWorldMatrix(true, true);
+      const rootWorldInverse = sourceRoot.matrixWorld.clone().invert();
+      const meshEntries = [];
+      const prototypeBox = new THREE.Box3();
+      prototypeBox.makeEmpty();
+
+      sourceRoot.traverse((child) => {
+        if (!child.isMesh || !child.geometry) return;
+
+        child.updateWorldMatrix(true, false);
+        const relativeMatrix = rootWorldInverse.clone().multiply(child.matrixWorld);
+        const geometry = child.geometry.clone();
+        geometry.applyMatrix4(relativeMatrix);
+        geometry.computeVertexNormals();
+        geometry.normalizeNormals();
+        geometry.computeBoundingBox();
+
+        if (geometry.boundingBox) prototypeBox.union(geometry.boundingBox);
+
+        const sourceMaterials = Array.isArray(child.material)
+          ? child.material
+          : [child.material].filter(Boolean);
+        const highestGroupMaterialIndex = geometry.groups.reduce(
+          (highest, group) => Math.max(highest, group.materialIndex ?? 0),
+          0,
+        );
+
+        meshEntries.push({
+          name: child.name,
+          geometry,
+          materialCount: Math.max(1, sourceMaterials.length, highestGroupMaterialIndex + 1),
+        });
+      });
+
+      if (meshEntries.length === 0 || prototypeBox.isEmpty()) return null;
+
+      const size = prototypeBox.getSize(new THREE.Vector3());
       const targetHeight = (PIECE_HEIGHTS[pieceType] ?? 4) * PIECE_SCALE_MULTIPLIER;
       const scale = size.y > 0 ? targetHeight / size.y : 1;
-      modelRoot.scale.multiplyScalar(scale);
-      modelRoot.updateMatrixWorld(true);
+      const center = prototypeBox.getCenter(new THREE.Vector3());
+      const normalizationMatrix = new THREE.Matrix4()
+        .makeScale(scale, scale, scale)
+        .multiply(new THREE.Matrix4().makeTranslation(-center.x, -prototypeBox.min.y, -center.z));
 
-      const scaledBox = new THREE.Box3().setFromObject(modelRoot);
-      const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
+      meshEntries.forEach((entry) => {
+        entry.geometry.applyMatrix4(normalizationMatrix);
+        entry.geometry.computeVertexNormals();
+        entry.geometry.normalizeNormals();
+        entry.geometry.computeBoundingBox();
+        entry.geometry.computeBoundingSphere();
+      });
 
-      modelRoot.position.x -= scaledCenter.x;
-      modelRoot.position.y -= scaledBox.min.y;
-      modelRoot.position.z -= scaledCenter.z;
-      modelRoot.updateMatrixWorld(true);
+      return {
+        pieceType,
+        sourceName: sourceRoot.name,
+        visualHeight: targetHeight,
+        meshes: meshEntries,
+      };
     }
 
     function createPieceInstance(pieceType) {
-      const source = ownerPieceNodes[pieceType] ?? riskPieceNodes[pieceType];
-      if (!source) return null;
+      const prototype = normalizedPiecePrototypes[pieceType];
+      if (!prototype) return null;
 
-      const pieceClone = source.clone(true);
+      const pieceRoot = new THREE.Group();
+      pieceRoot.name = `${prototype.sourceName || pieceType}_hologram`;
       const pieceMeshes = [];
+      const hologramOverlays = [];
       const initialMix = currentMode === 'risk' ? 1 : 0;
 
-      pieceClone.traverse((child) => {
-        if (child.isMesh) pieceMeshes.push(child);
-      });
-
-      pieceMeshes.forEach((mesh) => {
-        mesh.geometry = mesh.geometry.clone();
-        mesh.geometry.computeVertexNormals();
-        mesh.geometry.normalizeNormals();
-
-        const sourceMaterials = Array.isArray(mesh.material)
-          ? mesh.material
-          : [mesh.material].filter(Boolean);
-        const instanceMaterials = (sourceMaterials.length ? sourceMaterials : [null])
-          .map((material) => createHolographicPieceMaterial(material, initialMix));
-
-        mesh.material = Array.isArray(mesh.material) ? instanceMaterials : instanceMaterials[0];
+      prototype.meshes.forEach((entry, meshIndex) => {
+        const materials = Array.from({ length: entry.materialCount }, () =>
+          createHolographicPieceMaterial(null, initialMix));
+        const mesh = new THREE.Mesh(entry.geometry, entry.materialCount > 1 ? materials : materials[0]);
+        mesh.name = entry.name || `${pieceType}_mesh_${meshIndex}`;
+        mesh.renderOrder = 1;
         mesh.castShadow = false;
-        mesh.receiveShadow = true;
-      });
+        mesh.receiveShadow = false;
 
-      normalizePieceModel(pieceClone, pieceType);
+        const rimShell = new THREE.Mesh(mesh.geometry, createHolographicRimMaterial(initialMix));
+        rimShell.name = `${mesh.name || pieceType}_holographic_rim`;
+        rimShell.scale.setScalar(1.022);
+        rimShell.renderOrder = 3;
+        rimShell.castShadow = false;
+        rimShell.receiveShadow = false;
+        rimShell.raycast = () => {};
+        mesh.add(rimShell);
+        hologramOverlays.push({ material: rimShell.material, type: 'rim' });
+
+        const lineMesh = new THREE.Mesh(mesh.geometry, createHolographicLineMaterial(initialMix));
+        lineMesh.name = `${mesh.name || pieceType}_holographic_lines`;
+        lineMesh.scale.setScalar(1.006);
+        lineMesh.renderOrder = 4;
+        lineMesh.castShadow = false;
+        lineMesh.receiveShadow = false;
+        lineMesh.raycast = () => {};
+        mesh.add(lineMesh);
+        hologramOverlays.push({ material: lineMesh.material, type: 'line' });
+
+        pieceMeshes.push(mesh);
+        pieceRoot.add(mesh);
+      });
 
       const pieceGroup = new THREE.Group();
-      pieceGroup.add(pieceClone);
+      pieceGroup.name = prototype.sourceName || pieceType;
+      pieceGroup.add(pieceRoot);
       pieceGroup.userData = {
         ...pieceGroup.userData,
         pieceType,
-        visualHeight: (PIECE_HEIGHTS[pieceType] ?? 4) * PIECE_SCALE_MULTIPLIER,
+        visualHeight: prototype.visualHeight,
         renderMeshes: pieceMeshes,
+        hologramOverlays,
         themeMix: initialMix,
         targetThemeMix: initialMix,
       };
@@ -1573,6 +1855,13 @@ const ChessTreadmill = ({ headerHeight }) => {
           return acc;
         }, {});
 
+        normalizedPiecePrototypes = Object.keys(PIECE_NODE_NAMES.owner).reduce((acc, pieceType) => {
+          const sourceNode = ownerPieceNodes[pieceType] ?? riskPieceNodes[pieceType];
+          const prototype = createNormalizedPiecePrototype(sourceNode, pieceType);
+          if (prototype) acc[pieceType] = prototype;
+          return acc;
+        }, {});
+
         populatePieces();
       })
       .catch((error) => {
@@ -1595,7 +1884,7 @@ const ChessTreadmill = ({ headerHeight }) => {
       return meshes;
     }
 
-    function applyPieceMaterialState(piece, opacity, themeMix) {
+    function applyPieceMaterialState(piece, opacity, themeMix, focusBoost = 0) {
       getPieceRenderMeshes(piece).forEach((mesh) => {
         if (!mesh.material) return;
         const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
@@ -1603,13 +1892,29 @@ const ChessTreadmill = ({ headerHeight }) => {
           if (
             Math.abs((material.userData.lastThemeMix ?? -1) - themeMix) < 0.001
             && Math.abs((material.userData.lastOpacity ?? -1) - opacity) < 0.002
+            && Math.abs((material.userData.lastFocusBoost ?? -1) - focusBoost) < 0.02
           ) {
             return;
           }
-          syncHolographicPieceMaterial(material, themeMix, opacity);
+          syncHolographicPieceMaterial(material, themeMix, opacity, focusBoost);
           material.userData.lastThemeMix = themeMix;
           material.userData.lastOpacity = opacity;
+          material.userData.lastFocusBoost = focusBoost;
         });
+      });
+
+      piece.userData.hologramOverlays?.forEach(({ material, type }) => {
+        if (
+          Math.abs((material.userData.lastThemeMix ?? -1) - themeMix) < 0.001
+          && Math.abs((material.userData.lastOpacity ?? -1) - opacity) < 0.002
+          && Math.abs((material.userData.lastFocusBoost ?? -1) - focusBoost) < 0.02
+        ) {
+          return;
+        }
+        syncHolographicOverlayMaterial(material, themeMix, opacity, focusBoost, type);
+        material.userData.lastThemeMix = themeMix;
+        material.userData.lastOpacity = opacity;
+        material.userData.lastFocusBoost = focusBoost;
       });
     }
 
@@ -1619,10 +1924,9 @@ const ChessTreadmill = ({ headerHeight }) => {
 
       currentShadowPieceUUID = nextShadowPieceUUID;
       interactivePieces.forEach((piece) => {
-        const shouldCastShadow = piece.uuid === nextShadowPieceUUID;
         getPieceRenderMeshes(piece).forEach((mesh) => {
-          if (mesh.castShadow !== shouldCastShadow) {
-            mesh.castShadow = shouldCastShadow;
+          if (mesh.castShadow) {
+            mesh.castShadow = false;
           }
         });
       });
@@ -1805,7 +2109,7 @@ const ChessTreadmill = ({ headerHeight }) => {
           tile.material.opacity = fade * introState.p;
           if ('emissive' in tile.material && tile.material.emissive) {
             tile.material.emissive.copy(tile.userData.emissiveColor);
-            tile.material.emissiveIntensity = 0.006 + centerFocus * (tile.userData.isDark ? 0.026 : 0.018);
+            tile.material.emissiveIntensity = 0.003 + centerFocus * (tile.userData.isDark ? 0.014 : 0.01);
           }
           if (tile.children[0]) tile.children[0].material.opacity = (fade * introState.p) * 0.4;
         });
@@ -1832,8 +2136,9 @@ const ChessTreadmill = ({ headerHeight }) => {
           }
         }
 
-        const selectionLift = hasSelectedPiece && isFocused ? 0.26 : 0;
-        const nonSelectedOpacity = hasSelectedPiece && !isFocused ? 0.66 : 1;
+        const selectionLift = hasSelectedPiece && isFocused ? 0.18 : 0;
+        const nonSelectedOpacity = hasSelectedPiece && !isFocused ? 0.72 : 1;
+        const hologramFocusBoost = hasSelectedPiece ? (isFocused ? 0.82 : -0.22) : centerFocus * 0.18;
 
         piece.position.set(transform.x, transform.y + PIECE_BASE_LIFT + bobbing + selectionLift, transform.z);
         piece.rotation.set(transform.rx, transform.ry, transform.rz);
@@ -1845,7 +2150,7 @@ const ChessTreadmill = ({ headerHeight }) => {
         piece.visible = pieceReveal > 0.005;
         piece.userData.themeMix += (piece.userData.targetThemeMix - piece.userData.themeMix) * 0.08;
 
-        const targetScale = hasSelectedPiece ? (isFocused ? 1.12 : 0.985) : 1.0;
+        const targetScale = hasSelectedPiece ? (isFocused ? 1.06 : 0.99) : 1.0;
         targetScaleVector.setScalar(targetScale);
         piece.scale.lerp(targetScaleVector, 0.15);
 
@@ -1854,7 +2159,7 @@ const ChessTreadmill = ({ headerHeight }) => {
           featuredPiece = piece;
         }
 
-        applyPieceMaterialState(piece, pieceReveal * nonSelectedOpacity, piece.userData.themeMix);
+        applyPieceMaterialState(piece, pieceReveal * nonSelectedOpacity, piece.userData.themeMix, hologramFocusBoost);
       });
 
       if (hasSelectedPiece) {
@@ -1872,6 +2177,8 @@ const ChessTreadmill = ({ headerHeight }) => {
         }
       }
 
+      rimLight.color.copy(ownerRimLightColor).lerp(riskRimLightColor, currentMode === 'risk' ? 1 : 0);
+
       if (featuredPiece) {
         spotlightWorldTarget.copy(featuredPiece.position);
         spotlightWorldTarget.y += featuredPiece.userData.visualHeight * 0.58;
@@ -1885,11 +2192,11 @@ const ChessTreadmill = ({ headerHeight }) => {
         keyShadowLight.target.position.lerp(spotlightWorldTarget, 0.06);
         rimLight.position.lerp(spotlightWorldPosition, 0.1);
         rimLight.target.position.lerp(spotlightWorldTarget, 0.14);
-        keyShadowLight.intensity += ((1.24 + featuredStrength * 0.34) - keyShadowLight.intensity) * 0.1;
-        rimLight.intensity += ((0.66 + featuredStrength * 0.58) - rimLight.intensity) * 0.12;
+        keyShadowLight.intensity += ((0.34 + featuredStrength * 0.12) - keyShadowLight.intensity) * 0.1;
+        rimLight.intensity += ((0.46 + featuredStrength * 0.34) - rimLight.intensity) * 0.12;
       } else {
-        keyShadowLight.intensity += (1.18 - keyShadowLight.intensity) * 0.1;
-        rimLight.intensity += (0.58 - rimLight.intensity) * 0.12;
+        keyShadowLight.intensity += (0.32 - keyShadowLight.intensity) * 0.1;
+        rimLight.intensity += (0.42 - rimLight.intensity) * 0.12;
       }
       setPremiumShadowPiece(featuredPiece);
       keyShadowLight.target.updateMatrixWorld();
