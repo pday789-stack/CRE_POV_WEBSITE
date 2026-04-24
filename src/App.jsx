@@ -595,31 +595,58 @@ const OctahedronScene = () => {
     const raycaster = new THREE.Raycaster();
     const mouse2D = new THREE.Vector2(-1000, -1000);
     let isHovering = false;
+    let accumulatedTime = 0;
+    let lastTime = Date.now();
+    let isVisible = false;
+    let isAnimating = false;
+    let disposed = false;
+    let needsRaycast = true;
+    let lastRaycastTime = 0;
+    let frameId;
 
-    const onMouseMove = (e) => {
+    const onPointerMove = (e) => {
       const mount = mountRef.current;
       if (!mount) return;
       const rect = mount.getBoundingClientRect();
       mouse2D.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       mouse2D.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      needsRaycast = true;
     };
-    window.addEventListener('mousemove', onMouseMove);
 
-    let accumulatedTime = 0;
-    let lastTime = Date.now();
-    let isVisible = false;
+    const onPointerLeave = () => {
+      mouse2D.set(-1000, -1000);
+      isHovering = false;
+      needsRaycast = true;
+    };
+
+    currentMount.addEventListener('pointermove', onPointerMove, { passive: true });
+    currentMount.addEventListener('pointerleave', onPointerLeave);
+
+    const startAnimation = () => {
+      if (!isAnimating && !disposed) {
+        isAnimating = true;
+        frameId = requestAnimationFrame(animate);
+      }
+    };
 
     const observer = new IntersectionObserver(([entry]) => {
       if (entry.isIntersecting) {
         accumulatedTime = 0;
         lastTime = Date.now();
         isVisible = true;
+        startAnimation();
       } else {
         isVisible = false;
+        if (isAnimating) {
+          cancelAnimationFrame(frameId);
+          isAnimating = false;
+        }
       }
     }, { threshold: 0.1 });
 
     observer.observe(currentMount);
+    const initialRect = currentMount.getBoundingClientRect();
+    isVisible = initialRect.bottom > 0 && initialRect.top < window.innerHeight;
 
     const handleWheel = (e) => {
       if (isHovering) {
@@ -630,8 +657,12 @@ const OctahedronScene = () => {
 
     currentMount.addEventListener('wheel', handleWheel, { passive: false });
 
-    let frameId;
     const animate = () => {
+      if (disposed || !isVisible) {
+        isAnimating = false;
+        return;
+      }
+
       const now = Date.now();
       if (isVisible) {
         const delta = (now - lastTime) * 0.001;
@@ -639,9 +670,13 @@ const OctahedronScene = () => {
       }
       lastTime = now;
 
-      raycaster.setFromCamera(mouse2D, camera);
-      const intersects = raycaster.intersectObject(group, true);
-      isHovering = intersects.length > 0;
+      if (needsRaycast || now - lastRaycastTime > 120) {
+        needsRaycast = false;
+        lastRaycastTime = now;
+        raycaster.setFromCamera(mouse2D, camera);
+        const intersects = raycaster.intersectObject(group, true);
+        isHovering = intersects.length > 0;
+      }
 
       scrollRotationRef.current += (targetScrollRotationRef.current - scrollRotationRef.current) * 0.08;
 
@@ -651,7 +686,7 @@ const OctahedronScene = () => {
       renderer.render(scene, camera);
       frameId = requestAnimationFrame(animate);
     };
-    animate();
+    if (isVisible) startAnimation();
 
     const handleResize = () => {
       const mount = mountRef.current;
@@ -666,10 +701,12 @@ const OctahedronScene = () => {
     window.addEventListener('resize', handleResize);
 
     return () => {
+      disposed = true;
       observer.disconnect();
       cancelAnimationFrame(frameId);
       window.removeEventListener('resize', handleResize);
-      window.removeEventListener('mousemove', onMouseMove);
+      currentMount.removeEventListener('pointermove', onPointerMove);
+      currentMount.removeEventListener('pointerleave', onPointerLeave);
       currentMount.removeEventListener('wheel', handleWheel);
       if (currentMount.contains(renderer.domElement)) {
         currentMount.removeChild(renderer.domElement);
@@ -709,10 +746,15 @@ const ChessTreadmill = ({ headerHeight }) => {
     let introState = { p: 1 };
     let currentMode = 'owner';
     let currentHoveredUUID = null;
+    let currentMilestoneLabel = '';
+    let currentMilestoneMode = '';
     let interactionMode = 'hover';
     let needsRaycast = true;
     let lastRaycastTime = 0;
     let lastRaycastScroll = -Infinity;
+    let scrollRafId = 0;
+    let lastBoardPathScroll = Infinity;
+    let lastBoardIntroProgress = Infinity;
     let ownerPieceNodes = {};
     let riskPieceNodes = {};
     let boardTileLookup = new Map();
@@ -813,6 +855,8 @@ const ChessTreadmill = ({ headerHeight }) => {
       });
 
     const terminalSectionStartLogicalX = TERMINAL_SECTION_START_COLUMN * CHESS_ROAD_TILE_SIZE;
+    const rigidSectionEuler = new THREE.Euler();
+    const rigidSectionOffsetVector = new THREE.Vector3();
 
     function getPathTransform(baseX, baseZ) {
       let rx = 0;
@@ -844,13 +888,13 @@ const ChessTreadmill = ({ headerHeight }) => {
 
     function getRigidSectionTransform(anchorBaseX, localOffsetX, localOffsetZ) {
       const anchorTransform = getPathTransform(anchorBaseX, 0);
-      const anchorEuler = new THREE.Euler(anchorTransform.rx, anchorTransform.ry, anchorTransform.rz);
-      const localOffset = new THREE.Vector3(localOffsetX, 0, localOffsetZ).applyEuler(anchorEuler);
+      rigidSectionEuler.set(anchorTransform.rx, anchorTransform.ry, anchorTransform.rz);
+      rigidSectionOffsetVector.set(localOffsetX, 0, localOffsetZ).applyEuler(rigidSectionEuler);
 
       return {
-        x: anchorTransform.x + localOffset.x,
-        y: anchorTransform.y + localOffset.y,
-        z: anchorTransform.z + localOffset.z,
+        x: anchorTransform.x + rigidSectionOffsetVector.x,
+        y: anchorTransform.y + rigidSectionOffsetVector.y,
+        z: anchorTransform.z + rigidSectionOffsetVector.z,
         rx: anchorTransform.rx,
         ry: anchorTransform.ry,
         rz: anchorTransform.rz,
@@ -1105,6 +1149,8 @@ const ChessTreadmill = ({ headerHeight }) => {
     ];
     const formationAnchorEuler = new THREE.Euler();
     const formationOffsetVector = new THREE.Vector3();
+    const pieceAnchorEuler = new THREE.Euler();
+    const pieceAnchorOffsetVector = new THREE.Vector3();
 
     function resolveFormationTransform(anchorBoardCoord, localOffset, pathScroll) {
       const anchorTransform = getBoardTransformForTileCoord(anchorBoardCoord, pathScroll);
@@ -1237,17 +1283,17 @@ const ChessTreadmill = ({ headerHeight }) => {
       if (anchorBoardCoord && boardCoord) {
         const anchorTransform = getBoardTransformForTileCoord(anchorBoardCoord, pathScroll);
         const tileDelta = getTileCoordDelta(boardCoord, anchorBoardCoord);
-        const anchorEuler = new THREE.Euler(anchorTransform.rx, anchorTransform.ry, anchorTransform.rz);
-        const localOffset = new THREE.Vector3(
+        pieceAnchorEuler.set(anchorTransform.rx, anchorTransform.ry, anchorTransform.rz);
+        pieceAnchorOffsetVector.set(
           tileDelta.column * CHESS_ROAD_TILE_SIZE,
           0,
           tileDelta.row * CHESS_ROAD_TILE_SIZE,
-        ).applyEuler(anchorEuler);
+        ).applyEuler(pieceAnchorEuler);
 
         return {
-          x: anchorTransform.x + localOffset.x,
-          y: anchorTransform.y + localOffset.y,
-          z: anchorTransform.z + localOffset.z,
+          x: anchorTransform.x + pieceAnchorOffsetVector.x,
+          y: anchorTransform.y + pieceAnchorOffsetVector.y,
+          z: anchorTransform.z + pieceAnchorOffsetVector.z,
           rx: anchorTransform.rx,
           ry: anchorTransform.ry,
           rz: anchorTransform.rz,
@@ -1371,15 +1417,20 @@ const ChessTreadmill = ({ headerHeight }) => {
       const activeLabel = allLabels[msIndex];
 
       if (headingRef.current) {
-        if (headingRef.current.innerText !== activeLabel) {
+        if (currentMilestoneLabel !== activeLabel) {
           headingRef.current.innerText = activeLabel;
+          currentMilestoneLabel = activeLabel;
         }
-        headingRef.current.style.color = currentMode === 'owner' ? '#F3F2EE' : '#97182E';
+        if (currentMilestoneMode !== currentMode) {
+          headingRef.current.style.color = currentMode === 'owner' ? '#F3F2EE' : '#97182E';
+          currentMilestoneMode = currentMode;
+        }
       }
     }
 
     const raycaster = new THREE.Raycaster();
     const mouse2D = new THREE.Vector2(-1000, -1000);
+    const raycastHitMeshes = [];
 
     function pushActivePieceToReact(piece) {
       if (!piece) {
@@ -1401,13 +1452,20 @@ const ChessTreadmill = ({ headerHeight }) => {
       }
     }
 
-    const onMouseMove = (e) => {
+    const onPointerMove = (e) => {
       interactionMode = 'hover';
       needsRaycast = true;
       if (!renderer.domElement) return;
       const rect = renderer.domElement.getBoundingClientRect();
       mouse2D.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
       mouse2D.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+    };
+
+    const onPointerLeave = () => {
+      if (interactionMode === 'hover') {
+        mouse2D.set(-1000, -1000);
+        needsRaycast = true;
+      }
     };
 
     const onClick = () => {
@@ -1480,7 +1538,8 @@ const ChessTreadmill = ({ headerHeight }) => {
       }
     };
 
-    window.addEventListener('mousemove', onMouseMove);
+    renderer.domElement.addEventListener('pointermove', onPointerMove, { passive: true });
+    renderer.domElement.addEventListener('pointerleave', onPointerLeave);
     window.addEventListener('click', onClick);
     window.addEventListener('keydown', handleKeyDown);
 
@@ -1491,7 +1550,8 @@ const ChessTreadmill = ({ headerHeight }) => {
 
     const getHeaderHeight = () => headerHeightRef.current || 0;
 
-    const handleScroll = () => {
+    const syncScrollTarget = () => {
+      scrollRafId = 0;
       if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
       const scrollDistance = rect.height - window.innerHeight;
@@ -1499,8 +1559,13 @@ const ChessTreadmill = ({ headerHeight }) => {
       progress = Math.max(0, Math.min(1, progress));
       targetScrollPos = progress * 80;
     };
+
+    const handleScroll = () => {
+      if (scrollRafId !== 0) return;
+      scrollRafId = requestAnimationFrame(syncScrollTarget);
+    };
     window.addEventListener('scroll', handleScroll, { passive: true });
-    handleScroll();
+    syncScrollTarget();
 
     const startAnimation = () => {
       if (!isAnimating && !disposed) {
@@ -1719,15 +1784,15 @@ const ChessTreadmill = ({ headerHeight }) => {
         lastRaycastTime = time;
         lastRaycastScroll = pathScroll;
         raycaster.setFromCamera(mouse2D, camera);
-        const hitMeshes = [];
+        raycastHitMeshes.length = 0;
 
         interactivePieces.forEach((piece) => {
           if (getPieceRevealProgress(piece, pathScroll) > 0.18) {
-            hitMeshes.push(...getPieceRenderMeshes(piece));
+            raycastHitMeshes.push(...getPieceRenderMeshes(piece));
           }
         });
 
-        const intersects = raycaster.intersectObjects(hitMeshes, false);
+        const intersects = raycaster.intersectObjects(raycastHitMeshes, false);
         if (intersects.length > 0) {
           let obj = intersects[0].object;
           while (obj.parent && !interactivePieces.includes(obj)) obj = obj.parent;
@@ -1737,24 +1802,33 @@ const ChessTreadmill = ({ headerHeight }) => {
         }
       }
 
-      boardTiles.forEach((tile) => {
-        const currentX = tile.userData.originalX - pathScroll;
-        const transform = getBoardTransformForTileCoord(tile.userData.tileCoord, pathScroll);
-        tile.position.set(transform.x, transform.y + (1 - introState.p) * tile.userData.dropDist, transform.z);
-        tile.rotation.set(transform.rx, transform.ry, transform.rz);
+      const shouldUpdateBoard = (
+        Math.abs(pathScroll - lastBoardPathScroll) > 0.001
+        || Math.abs(introState.p - lastBoardIntroProgress) > 0.001
+      );
 
-        const fade = getUnifiedFade(currentX);
-        const assemblyProgress = getTileAssemblyProgress(tile.userData.tileCoord, pathScroll);
-        const centerFocus = getCenterFocus(currentX, 8.75);
-        tile.userData.assemblyProgress = assemblyProgress;
-        tile.userData.revealProgress = fade * introState.p;
-        tile.material.opacity = fade * introState.p;
-        if ('emissive' in tile.material && tile.material.emissive) {
-          tile.material.emissive.copy(tile.userData.emissiveColor);
-          tile.material.emissiveIntensity = 0.006 + centerFocus * (tile.userData.isDark ? 0.026 : 0.018);
-        }
-        if (tile.children[0]) tile.children[0].material.opacity = (fade * introState.p) * 0.4;
-      });
+      if (shouldUpdateBoard) {
+        boardTiles.forEach((tile) => {
+          const currentX = tile.userData.originalX - pathScroll;
+          const transform = getBoardTransformForTileCoord(tile.userData.tileCoord, pathScroll);
+          tile.position.set(transform.x, transform.y + (1 - introState.p) * tile.userData.dropDist, transform.z);
+          tile.rotation.set(transform.rx, transform.ry, transform.rz);
+
+          const fade = getUnifiedFade(currentX);
+          const assemblyProgress = getTileAssemblyProgress(tile.userData.tileCoord, pathScroll);
+          const centerFocus = getCenterFocus(currentX, 8.75);
+          tile.userData.assemblyProgress = assemblyProgress;
+          tile.userData.revealProgress = fade * introState.p;
+          tile.material.opacity = fade * introState.p;
+          if ('emissive' in tile.material && tile.material.emissive) {
+            tile.material.emissive.copy(tile.userData.emissiveColor);
+            tile.material.emissiveIntensity = 0.006 + centerFocus * (tile.userData.isDark ? 0.026 : 0.018);
+          }
+          if (tile.children[0]) tile.children[0].material.opacity = (fade * introState.p) * 0.4;
+        });
+        lastBoardPathScroll = pathScroll;
+        lastBoardIntroProgress = introState.p;
+      }
 
       let featuredPiece = null;
       let featuredStrength = 0;
@@ -1842,9 +1916,9 @@ const ChessTreadmill = ({ headerHeight }) => {
       coolRimLight.target.updateMatrixWorld();
       centerSpotLight.target.updateMatrixWorld();
 
-      updateQueenPawnFormationDebugMarkers(pathScroll);
+      if (IS_DEVELOPMENT) updateQueenPawnFormationDebugMarkers(pathScroll);
       renderer.render(scene, camera);
-      validateQueenPawnFormation(pathScroll);
+      if (IS_DEVELOPMENT) validateQueenPawnFormation(pathScroll);
       frameId = requestAnimationFrame(animate);
     };
     if (isVisible) startAnimation();
@@ -1868,9 +1942,11 @@ const ChessTreadmill = ({ headerHeight }) => {
     return () => {
       disposed = true;
       visibilityObserver.disconnect();
+      if (scrollRafId !== 0) cancelAnimationFrame(scrollRafId);
       window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', handleResize);
-      window.removeEventListener('mousemove', onMouseMove);
+      renderer.domElement.removeEventListener('pointermove', onPointerMove);
+      renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
       window.removeEventListener('click', onClick);
       window.removeEventListener('keydown', handleKeyDown);
       if (activeHeaderEl) activeHeaderEl.removeEventListener('click', toggleMode);
@@ -2053,7 +2129,9 @@ export default function App() {
 
     const syncHeaderHeight = () => {
       const nextHeight = Math.round(headerEl.getBoundingClientRect().height);
-      if (nextHeight > 0) setHeaderHeight(nextHeight);
+      if (nextHeight > 0) {
+        setHeaderHeight((currentHeight) => (currentHeight === nextHeight ? currentHeight : nextHeight));
+      }
     };
 
     syncHeaderHeight();
