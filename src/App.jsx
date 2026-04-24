@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
-import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 
 import logoSvg from '../CRE POV WEBSITE ASSETS/LOGO.svg';
 import leagueSpartanBg from '../CRE POV WEBSITE ASSETS/League Spartan.png';
@@ -52,38 +51,35 @@ const PIECE_HEIGHTS = {
 const PIECE_SCALE_MULTIPLIER = 1.3;
 const PIECE_BASE_LIFT = 1.18;
 const PIECE_BOB_AMPLITUDE = 0.12;
+const MAX_RENDER_DPR = 1.15;
+const BOARD_UPDATE_SCROLL_EPSILON = 0.018;
+const SCROLL_SETTLE_EPSILON = 0.004;
 const PIECE_MATERIAL_PROFILES = {
   owner: {
     color: '#F3F2EE',
-    transmission: 0.72,
-    roughness: 0.025,
-    metalness: 0,
-    ior: 1.53,
-    thickness: 0.34,
-    attenuationColor: '#FFFFFF',
-    attenuationDistance: 1.65,
-    clearcoat: 1,
-    clearcoatRoughness: 0.045,
-    reflectivity: 0.72,
-    envMapIntensity: 1.18,
-    specularIntensity: 0.86,
-    specularColor: '#FFF9EF',
+    roughness: 0.12,
+    metalness: 0.02,
+    clearcoat: 0.9,
+    clearcoatRoughness: 0.09,
+    reflectivity: 0.54,
+    envMapIntensity: 1.08,
+    specularIntensity: 0.74,
+    specularColor: '#F8FBFF',
+    emissive: '#E7EFF8',
+    emissiveIntensity: 0.045,
   },
   risk: {
     color: '#97182E',
-    transmission: 1,
-    roughness: 0.02,
-    metalness: 0,
-    ior: 1.53,
-    thickness: 0.5,
-    attenuationColor: '#1A1A1D',
-    attenuationDistance: 0.2,
-    clearcoat: 1,
-    clearcoatRoughness: 0.04,
-    reflectivity: 0.76,
-    envMapIntensity: 1.35,
-    specularIntensity: 0.82,
+    roughness: 0.11,
+    metalness: 0.02,
+    clearcoat: 0.92,
+    clearcoatRoughness: 0.08,
+    reflectivity: 0.6,
+    envMapIntensity: 1.14,
+    specularIntensity: 0.8,
     specularColor: '#F0BEC7',
+    emissive: '#4B0718',
+    emissiveIntensity: 0.09,
   },
 };
 
@@ -114,23 +110,22 @@ const formatVectorForDebug = (vector) => ({
   z: Number(vector.z.toFixed(3)),
 });
 
-const createPolishedResinPieceMaterial = (sourceMaterial, initialMix = 0) => {
+const getRenderPixelRatio = () => Math.min(window.devicePixelRatio || 1, MAX_RENDER_DPR);
+
+const createHolographicPieceMaterial = (sourceMaterial, initialMix = 0) => {
   const material = new THREE.MeshPhysicalMaterial({
     color: PIECE_MATERIAL_PROFILES.owner.color,
-    transmission: PIECE_MATERIAL_PROFILES.owner.transmission,
     roughness: PIECE_MATERIAL_PROFILES.owner.roughness,
     metalness: PIECE_MATERIAL_PROFILES.owner.metalness,
-    ior: PIECE_MATERIAL_PROFILES.owner.ior,
-    thickness: PIECE_MATERIAL_PROFILES.owner.thickness,
-    attenuationColor: PIECE_MATERIAL_PROFILES.owner.attenuationColor,
-    attenuationDistance: PIECE_MATERIAL_PROFILES.owner.attenuationDistance,
     clearcoat: PIECE_MATERIAL_PROFILES.owner.clearcoat,
     clearcoatRoughness: PIECE_MATERIAL_PROFILES.owner.clearcoatRoughness,
     reflectivity: PIECE_MATERIAL_PROFILES.owner.reflectivity,
     envMapIntensity: PIECE_MATERIAL_PROFILES.owner.envMapIntensity,
     specularIntensity: PIECE_MATERIAL_PROFILES.owner.specularIntensity,
     specularColor: PIECE_MATERIAL_PROFILES.owner.specularColor,
-    transparent: true,
+    emissive: PIECE_MATERIAL_PROFILES.owner.emissive,
+    emissiveIntensity: PIECE_MATERIAL_PROFILES.owner.emissiveIntensity,
+    transparent: false,
     opacity: 1,
     side: sourceMaterial?.side ?? THREE.FrontSide,
     dithering: true,
@@ -138,41 +133,39 @@ const createPolishedResinPieceMaterial = (sourceMaterial, initialMix = 0) => {
   material.userData.ownerProfile = {
     ...PIECE_MATERIAL_PROFILES.owner,
     color: new THREE.Color(PIECE_MATERIAL_PROFILES.owner.color),
-    attenuationColor: new THREE.Color(PIECE_MATERIAL_PROFILES.owner.attenuationColor),
     specularColor: new THREE.Color(PIECE_MATERIAL_PROFILES.owner.specularColor),
+    emissive: new THREE.Color(PIECE_MATERIAL_PROFILES.owner.emissive),
   };
   material.userData.riskProfile = {
     ...PIECE_MATERIAL_PROFILES.risk,
     color: new THREE.Color(PIECE_MATERIAL_PROFILES.risk.color),
-    attenuationColor: new THREE.Color(PIECE_MATERIAL_PROFILES.risk.attenuationColor),
     specularColor: new THREE.Color(PIECE_MATERIAL_PROFILES.risk.specularColor),
+    emissive: new THREE.Color(PIECE_MATERIAL_PROFILES.risk.emissive),
   };
-  syncPolishedResinPieceMaterial(material, initialMix, 1);
+  syncHolographicPieceMaterial(material, initialMix, 1);
   material.needsUpdate = true;
   return material;
 };
 
-function syncPolishedResinPieceMaterial(material, themeMix, opacity) {
+function syncHolographicPieceMaterial(material, themeMix, opacity) {
   const ownerProfile = material.userData.ownerProfile;
   const riskProfile = material.userData.riskProfile;
   if (!ownerProfile || !riskProfile) return;
 
   material.color.copy(ownerProfile.color).lerp(riskProfile.color, themeMix);
-  material.attenuationColor.copy(ownerProfile.attenuationColor).lerp(riskProfile.attenuationColor, themeMix);
   material.specularColor.copy(ownerProfile.specularColor).lerp(riskProfile.specularColor, themeMix);
-  material.transmission = THREE.MathUtils.lerp(ownerProfile.transmission, riskProfile.transmission, themeMix);
+  material.emissive.copy(ownerProfile.emissive).lerp(riskProfile.emissive, themeMix);
   material.roughness = THREE.MathUtils.lerp(ownerProfile.roughness, riskProfile.roughness, themeMix);
   material.metalness = THREE.MathUtils.lerp(ownerProfile.metalness, riskProfile.metalness, themeMix);
-  material.ior = THREE.MathUtils.lerp(ownerProfile.ior, riskProfile.ior, themeMix);
-  material.thickness = THREE.MathUtils.lerp(ownerProfile.thickness, riskProfile.thickness, themeMix);
-  material.attenuationDistance = THREE.MathUtils.lerp(ownerProfile.attenuationDistance, riskProfile.attenuationDistance, themeMix);
   material.clearcoat = THREE.MathUtils.lerp(ownerProfile.clearcoat, riskProfile.clearcoat, themeMix);
   material.clearcoatRoughness = THREE.MathUtils.lerp(ownerProfile.clearcoatRoughness, riskProfile.clearcoatRoughness, themeMix);
   material.reflectivity = THREE.MathUtils.lerp(ownerProfile.reflectivity, riskProfile.reflectivity, themeMix);
   material.envMapIntensity = THREE.MathUtils.lerp(ownerProfile.envMapIntensity, riskProfile.envMapIntensity, themeMix);
   material.specularIntensity = THREE.MathUtils.lerp(ownerProfile.specularIntensity, riskProfile.specularIntensity, themeMix);
+  material.emissiveIntensity = THREE.MathUtils.lerp(ownerProfile.emissiveIntensity, riskProfile.emissiveIntensity, themeMix);
   material.opacity = opacity;
-  material.depthWrite = opacity > 0.72;
+  material.transparent = opacity < 0.995;
+  material.depthWrite = opacity > 0.84;
 }
 
 const createSubtleMarbleTexture = ({ baseColor, veinColor, highlightColor, veinOpacity }) => {
@@ -518,7 +511,7 @@ const OctahedronScene = () => {
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+    renderer.setPixelRatio(getRenderPixelRatio());
 
     const currentMount = mountRef.current;
     currentMount.appendChild(renderer.domElement);
@@ -696,7 +689,7 @@ const OctahedronScene = () => {
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+      renderer.setPixelRatio(getRenderPixelRatio());
     };
     window.addEventListener('resize', handleResize);
 
@@ -746,6 +739,7 @@ const ChessTreadmill = ({ headerHeight }) => {
     let introState = { p: 1 };
     let currentMode = 'owner';
     let currentHoveredUUID = null;
+    let currentShadowPieceUUID = null;
     let currentMilestoneLabel = '';
     let currentMilestoneMode = '';
     let interactionMode = 'hover';
@@ -782,7 +776,7 @@ const ChessTreadmill = ({ headerHeight }) => {
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+    renderer.setPixelRatio(getRenderPixelRatio());
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -792,60 +786,31 @@ const ChessTreadmill = ({ headerHeight }) => {
     const currentMount = mountRef.current;
     currentMount.appendChild(renderer.domElement);
 
-    RectAreaLightUniformsLib.init();
-
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
     const environmentTarget = pmremGenerator.fromScene(new RoomEnvironment(), 0.04);
     scene.environment = environmentTarget.texture;
-    scene.environmentIntensity = 1.18;
+    scene.environmentIntensity = 1.04;
 
-    const ambientHemisphereLight = new THREE.HemisphereLight(0xfff7ed, 0x07080d, 0.15);
-    scene.add(ambientHemisphereLight);
+    const softFillLight = new THREE.HemisphereLight(0xfff7ed, 0x07080d, 0.32);
+    scene.add(softFillLight);
 
-    const keyShadowLight = new THREE.SpotLight(0xfff3e6, 1.72, 92, Math.PI / 5.8, 0.84, 1.72);
-    keyShadowLight.position.set(17, 27, 14);
+    const keyShadowLight = new THREE.SpotLight(0xfff1df, 1.48, 88, Math.PI / 5.9, 0.86, 1.76);
+    keyShadowLight.position.set(16, 25, 13);
     keyShadowLight.castShadow = true;
-    keyShadowLight.shadow.mapSize.set(1024, 1024);
+    keyShadowLight.shadow.mapSize.set(768, 768);
     keyShadowLight.shadow.bias = -0.00008;
     keyShadowLight.shadow.normalBias = 0.055;
-    keyShadowLight.shadow.radius = 3;
+    keyShadowLight.shadow.radius = 2.6;
     keyShadowLight.target.position.set(3.5, 2.6, 0);
     scene.add(keyShadowLight);
     scene.add(keyShadowLight.target);
 
-    const displayFillLight = new THREE.RectAreaLight(0xffffff, 2.55, 18, 7);
-    displayFillLight.position.set(1.5, 16.5, 12.5);
-    displayFillLight.lookAt(4, 2.4, 0);
-    scene.add(displayFillLight);
-
-    const sideFillLight = new THREE.RectAreaLight(0xcbd8ff, 1.45, 9, 17);
-    sideFillLight.position.set(-17, 7.6, -6.5);
-    sideFillLight.lookAt(6, 2, 0);
-    scene.add(sideFillLight);
-
-    const resinBounceLight = new THREE.RectAreaLight(0x97182e, 1.85, 10, 5.5);
-    resinBounceLight.position.set(-4.5, 5.8, 8.5);
-    resinBounceLight.lookAt(5, 1.1, 0);
-    scene.add(resinBounceLight);
-
-    const warmRimLight = new THREE.SpotLight(0xffb9a5, 0.78, 86, Math.PI / 6.2, 0.91, 1.92);
-    warmRimLight.position.set(15, 10.8, -18);
-    warmRimLight.target.position.set(6, 2.2, 0);
-    scene.add(warmRimLight);
-    scene.add(warmRimLight.target);
-
-    const coolRimLight = new THREE.SpotLight(0xc2d7ff, 0.72, 90, Math.PI / 5.8, 0.92, 1.96);
-    coolRimLight.position.set(-20, 11.5, -14);
-    coolRimLight.target.position.set(2, 2.4, 0);
-    scene.add(coolRimLight);
-    scene.add(coolRimLight.target);
-
-    const centerSpotLight = new THREE.SpotLight(0xffffff, 1.08, 42, Math.PI / 11.5, 0.9, 1.52);
-    centerSpotLight.position.set(4.4, 15.8, 6.8);
-    centerSpotLight.castShadow = false;
-    centerSpotLight.target.position.set(0, 0, 0);
-    scene.add(centerSpotLight);
-    scene.add(centerSpotLight.target);
+    const rimLight = new THREE.SpotLight(0xd7e8ff, 0.92, 82, Math.PI / 5.7, 0.9, 1.9);
+    rimLight.position.set(-17, 11.5, -14);
+    rimLight.castShadow = false;
+    rimLight.target.position.set(2, 2.4, 0);
+    scene.add(rimLight);
+    scene.add(rimLight.target);
 
     const loader = new GLTFLoader();
 
@@ -1059,10 +1024,10 @@ const ChessTreadmill = ({ headerHeight }) => {
           ? mesh.material
           : [mesh.material].filter(Boolean);
         const instanceMaterials = (sourceMaterials.length ? sourceMaterials : [null])
-          .map((material) => createPolishedResinPieceMaterial(material, initialMix));
+          .map((material) => createHolographicPieceMaterial(material, initialMix));
 
         mesh.material = Array.isArray(mesh.material) ? instanceMaterials : instanceMaterials[0];
-        mesh.castShadow = true;
+        mesh.castShadow = false;
         mesh.receiveShadow = true;
       });
 
@@ -1641,9 +1606,24 @@ const ChessTreadmill = ({ headerHeight }) => {
           ) {
             return;
           }
-          syncPolishedResinPieceMaterial(material, themeMix, opacity);
+          syncHolographicPieceMaterial(material, themeMix, opacity);
           material.userData.lastThemeMix = themeMix;
           material.userData.lastOpacity = opacity;
+        });
+      });
+    }
+
+    function setPremiumShadowPiece(featuredPiece) {
+      const nextShadowPieceUUID = featuredPiece?.uuid ?? null;
+      if (currentShadowPieceUUID === nextShadowPieceUUID) return;
+
+      currentShadowPieceUUID = nextShadowPieceUUID;
+      interactivePieces.forEach((piece) => {
+        const shouldCastShadow = piece.uuid === nextShadowPieceUUID;
+        getPieceRenderMeshes(piece).forEach((mesh) => {
+          if (mesh.castShadow !== shouldCastShadow) {
+            mesh.castShadow = shouldCastShadow;
+          }
         });
       });
     }
@@ -1766,7 +1746,10 @@ const ChessTreadmill = ({ headerHeight }) => {
 
       const time = Date.now();
 
-      scrollPos += (targetScrollPos - scrollPos) * 0.08;
+      const scrollDelta = targetScrollPos - scrollPos;
+      scrollPos = Math.abs(scrollDelta) < SCROLL_SETTLE_EPSILON
+        ? targetScrollPos
+        : scrollPos + scrollDelta * 0.08;
       const pathScroll = Math.min(scrollPos, MAX_PATH_SCROLL);
       const hasSelectedPiece = currentHoveredUUID !== null;
 
@@ -1803,7 +1786,7 @@ const ChessTreadmill = ({ headerHeight }) => {
       }
 
       const shouldUpdateBoard = (
-        Math.abs(pathScroll - lastBoardPathScroll) > 0.001
+        Math.abs(pathScroll - lastBoardPathScroll) > BOARD_UPDATE_SCROLL_EPSILON
         || Math.abs(introState.p - lastBoardIntroProgress) > 0.001
       );
 
@@ -1894,27 +1877,23 @@ const ChessTreadmill = ({ headerHeight }) => {
         spotlightWorldTarget.y += featuredPiece.userData.visualHeight * 0.58;
 
         spotlightWorldPosition.set(
-          featuredPiece.position.x + 3.1,
-          spotlightWorldTarget.y + 10.6,
-          featuredPiece.position.z + 5.9,
+          featuredPiece.position.x - 5.8,
+          spotlightWorldTarget.y + 8.2,
+          featuredPiece.position.z - 6.2,
         );
 
-        centerSpotLight.position.lerp(spotlightWorldPosition, 0.12);
-        centerSpotLight.target.position.lerp(spotlightWorldTarget, 0.18);
         keyShadowLight.target.position.lerp(spotlightWorldTarget, 0.06);
-        warmRimLight.target.position.lerp(spotlightWorldTarget, 0.08);
-        coolRimLight.target.position.lerp(spotlightWorldTarget, 0.08);
-        displayFillLight.lookAt(spotlightWorldTarget);
-        sideFillLight.lookAt(spotlightWorldTarget);
-        resinBounceLight.lookAt(spotlightWorldTarget);
-        centerSpotLight.intensity += ((0.62 + featuredStrength * 0.96) - centerSpotLight.intensity) * 0.12;
+        rimLight.position.lerp(spotlightWorldPosition, 0.1);
+        rimLight.target.position.lerp(spotlightWorldTarget, 0.14);
+        keyShadowLight.intensity += ((1.24 + featuredStrength * 0.34) - keyShadowLight.intensity) * 0.1;
+        rimLight.intensity += ((0.66 + featuredStrength * 0.58) - rimLight.intensity) * 0.12;
       } else {
-        centerSpotLight.intensity += (0.48 - centerSpotLight.intensity) * 0.12;
+        keyShadowLight.intensity += (1.18 - keyShadowLight.intensity) * 0.1;
+        rimLight.intensity += (0.58 - rimLight.intensity) * 0.12;
       }
+      setPremiumShadowPiece(featuredPiece);
       keyShadowLight.target.updateMatrixWorld();
-      warmRimLight.target.updateMatrixWorld();
-      coolRimLight.target.updateMatrixWorld();
-      centerSpotLight.target.updateMatrixWorld();
+      rimLight.target.updateMatrixWorld();
 
       if (IS_DEVELOPMENT) updateQueenPawnFormationDebugMarkers(pathScroll);
       renderer.render(scene, camera);
@@ -1930,7 +1909,7 @@ const ChessTreadmill = ({ headerHeight }) => {
       const h = mount.clientHeight;
       const newAspect = w / h;
       renderer.setSize(w, h);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
+      renderer.setPixelRatio(getRenderPixelRatio());
       camera.left = -d * newAspect;
       camera.right = d * newAspect;
       camera.top = d;
