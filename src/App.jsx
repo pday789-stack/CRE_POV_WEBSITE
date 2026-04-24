@@ -52,6 +52,16 @@ const PIECE_HEIGHTS = {
 const PIECE_SCALE_MULTIPLIER = 1.3;
 const PIECE_BASE_LIFT = 1.18;
 const PIECE_BOB_AMPLITUDE = 0.12;
+const RESIN_PIECE_MATERIAL_PROFILE = {
+  color: '#97182E',
+  transmission: 1,
+  roughness: 0.02,
+  metalness: 0,
+  ior: 1.53,
+  thickness: 0.5,
+  attenuationColor: '#1A1A1D',
+  attenuationDistance: 0.2,
+};
 
 const CHESS_ROAD_WIDTH_TILES = 5;
 const CHESS_ROAD_LENGTH_TILES = 24;
@@ -61,12 +71,87 @@ const CHESS_ROAD_BOARD_THICKNESS = 1.5;
 const CHESS_ROAD_CENTER_ROW = Math.floor(CHESS_ROAD_WIDTH_TILES / 2);
 const TERMINAL_SECTION_START_COLUMN = 16;
 const MAX_PATH_SCROLL = 65;
+const QUEEN_PAWN_CLUSTER_DEBUG = false;
+const QUEEN_PAWN_CLUSTER_VALIDATION_INTERVAL_MS = 1000;
+const IS_DEVELOPMENT = import.meta.env.DEV;
 
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 const smoothstep = (edge0, edge1, value) => {
   if (edge0 === edge1) return value < edge0 ? 0 : 1;
   const t = clamp01((value - edge0) / (edge1 - edge0));
   return t * t * (3 - 2 * t);
+};
+
+const formatVectorForDebug = (vector) => ({
+  x: Number(vector.x.toFixed(3)),
+  y: Number(vector.y.toFixed(3)),
+  z: Number(vector.z.toFixed(3)),
+});
+
+const createPolishedResinPieceMaterial = (sourceMaterial) => {
+  const material = new THREE.MeshPhysicalMaterial({
+    color: RESIN_PIECE_MATERIAL_PROFILE.color,
+    transmission: RESIN_PIECE_MATERIAL_PROFILE.transmission,
+    roughness: RESIN_PIECE_MATERIAL_PROFILE.roughness,
+    metalness: RESIN_PIECE_MATERIAL_PROFILE.metalness,
+    ior: RESIN_PIECE_MATERIAL_PROFILE.ior,
+    thickness: RESIN_PIECE_MATERIAL_PROFILE.thickness,
+    attenuationColor: RESIN_PIECE_MATERIAL_PROFILE.attenuationColor,
+    attenuationDistance: RESIN_PIECE_MATERIAL_PROFILE.attenuationDistance,
+    transparent: true,
+    opacity: 1,
+    side: sourceMaterial?.side ?? THREE.FrontSide,
+    dithering: true,
+  });
+  material.needsUpdate = true;
+  return material;
+};
+
+const createSubtleMarbleTexture = ({ baseColor, veinColor, highlightColor, veinOpacity }) => {
+  const canvas = document.createElement('canvas');
+  const size = 256;
+  canvas.width = size;
+  canvas.height = size;
+
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = baseColor;
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  for (let index = 0; index < 7; index += 1) {
+    const y = -44 + index * 48;
+    const drift = Math.sin(index * 1.7) * 16;
+    ctx.globalAlpha = veinOpacity * (index % 3 === 0 ? 1.25 : 0.72);
+    ctx.strokeStyle = veinColor;
+    ctx.lineWidth = index % 3 === 0 ? 1.15 : 0.62;
+    ctx.beginPath();
+    ctx.moveTo(-24, y + drift);
+    ctx.bezierCurveTo(
+      58,
+      y + 12 + Math.cos(index * 0.9) * 20,
+      152,
+      y - 18 + Math.sin(index * 1.2) * 22,
+      286,
+      y + 34 + Math.cos(index * 1.4) * 18,
+    );
+    ctx.stroke();
+
+    ctx.globalAlpha = veinOpacity * 0.28;
+    ctx.strokeStyle = highlightColor;
+    ctx.lineWidth = 0.45;
+    ctx.beginPath();
+    ctx.moveTo(-18, y + drift + 5);
+    ctx.bezierCurveTo(72, y + 18, 148, y - 10, 278, y + 38);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  texture.needsUpdate = true;
+  return texture;
 };
 
 const makeTileCoord = (column, row) => ({ column, row });
@@ -560,17 +645,17 @@ const ChessTreadmill = ({ headerHeight }) => {
     let ownerPieceNodes = {};
     let riskPieceNodes = {};
     let boardTileLookup = new Map();
+    let queenPawnCluster = null;
+    let lastQueenPawnClusterValidation = 0;
     let frameId;
     let disposed = false;
     let isVisible = false;
     let isAnimating = false;
 
-    const COLOR_WHITE = 0xf3f2ee;
-    const COLOR_BURGUNDY = 0x97182e;
-    const COLOR_BOARD_LIGHT_WOOD = 0xd9c2a0;
-    const COLOR_BOARD_DARK_OAK = 0x4e3426;
-    const COLOR_EDGE_LIGHT = 0x8c6b4a;
-    const COLOR_EDGE_DARK = 0x1a0f0a;
+    const COLOR_BOARD_IVORY = '#F3F2EE';
+    const COLOR_BOARD_CHARCOAL = '#1A1A1D';
+    const COLOR_BOARD_EDGE_LIGHT = 0xc9c7be;
+    const COLOR_BOARD_EDGE_DARK = 0x07070a;
 
     const width = mountRef.current.clientWidth;
     const height = mountRef.current.clientHeight;
@@ -589,7 +674,7 @@ const ChessTreadmill = ({ headerHeight }) => {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.95;
+    renderer.toneMappingExposure = 0.82;
 
     const currentMount = mountRef.current;
     currentMount.appendChild(renderer.domElement);
@@ -599,50 +684,56 @@ const ChessTreadmill = ({ headerHeight }) => {
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
     const environmentTarget = pmremGenerator.fromScene(new RoomEnvironment(), 0.08);
     scene.environment = environmentTarget.texture;
+    scene.environmentIntensity = 1.18;
 
-    const ambientHemisphereLight = new THREE.HemisphereLight(0xfaf1e4, 0x090b11, 0.26);
+    const ambientHemisphereLight = new THREE.HemisphereLight(0xfff7ed, 0x07080d, 0.15);
     scene.add(ambientHemisphereLight);
 
-    const keyShadowLight = new THREE.SpotLight(0xfff1dd, 1.26, 86, Math.PI / 5.1, 0.78, 1.58);
-    keyShadowLight.position.set(18, 26, 16);
+    const keyShadowLight = new THREE.SpotLight(0xfff3e6, 1.72, 92, Math.PI / 5.8, 0.84, 1.72);
+    keyShadowLight.position.set(17, 27, 14);
     keyShadowLight.castShadow = true;
-    keyShadowLight.shadow.mapSize.set(3072, 3072);
-    keyShadowLight.shadow.bias = -0.00012;
-    keyShadowLight.shadow.normalBias = 0.04;
-    keyShadowLight.shadow.radius = 4;
+    keyShadowLight.shadow.mapSize.set(4096, 4096);
+    keyShadowLight.shadow.bias = -0.00008;
+    keyShadowLight.shadow.normalBias = 0.055;
+    keyShadowLight.shadow.radius = 5;
     keyShadowLight.target.position.set(3.5, 2.6, 0);
     scene.add(keyShadowLight);
     scene.add(keyShadowLight.target);
 
-    const displayFillLight = new THREE.RectAreaLight(0xfff6ee, 4.8, 20, 10);
-    displayFillLight.position.set(2, 15.5, 13.5);
+    const displayFillLight = new THREE.RectAreaLight(0xffffff, 2.55, 18, 7);
+    displayFillLight.position.set(1.5, 16.5, 12.5);
     displayFillLight.lookAt(4, 2.4, 0);
     scene.add(displayFillLight);
 
-    const sideFillLight = new THREE.RectAreaLight(0xd7e4ff, 3.2, 10, 18);
-    sideFillLight.position.set(-16, 7, -6.5);
+    const sideFillLight = new THREE.RectAreaLight(0xcbd8ff, 1.45, 9, 17);
+    sideFillLight.position.set(-17, 7.6, -6.5);
     sideFillLight.lookAt(6, 2, 0);
     scene.add(sideFillLight);
 
-    const warmRimLight = new THREE.SpotLight(0xffd8c6, 0.42, 82, Math.PI / 5.5, 0.9, 1.88);
-    warmRimLight.position.set(14, 10, -18);
+    const resinBounceLight = new THREE.RectAreaLight(0x97182e, 1.85, 10, 5.5);
+    resinBounceLight.position.set(-4.5, 5.8, 8.5);
+    resinBounceLight.lookAt(5, 1.1, 0);
+    scene.add(resinBounceLight);
+
+    const warmRimLight = new THREE.SpotLight(0xffb9a5, 0.78, 86, Math.PI / 6.2, 0.91, 1.92);
+    warmRimLight.position.set(15, 10.8, -18);
     warmRimLight.target.position.set(6, 2.2, 0);
     scene.add(warmRimLight);
     scene.add(warmRimLight.target);
 
-    const coolRimLight = new THREE.SpotLight(0xc8dcff, 0.64, 90, Math.PI / 5.2, 0.92, 1.92);
+    const coolRimLight = new THREE.SpotLight(0xc2d7ff, 0.72, 90, Math.PI / 5.8, 0.92, 1.96);
     coolRimLight.position.set(-20, 11.5, -14);
     coolRimLight.target.position.set(2, 2.4, 0);
     scene.add(coolRimLight);
     scene.add(coolRimLight.target);
 
-    const centerSpotLight = new THREE.SpotLight(0xffffff, 0.92, 44, Math.PI / 9.9, 0.88, 1.46);
-    centerSpotLight.position.set(4.8, 15.5, 7.2);
+    const centerSpotLight = new THREE.SpotLight(0xffffff, 1.08, 42, Math.PI / 11.5, 0.9, 1.52);
+    centerSpotLight.position.set(4.4, 15.8, 6.8);
     centerSpotLight.castShadow = true;
     centerSpotLight.shadow.mapSize.set(2048, 2048);
-    centerSpotLight.shadow.bias = -0.00014;
-    centerSpotLight.shadow.normalBias = 0.05;
-    centerSpotLight.shadow.radius = 3;
+    centerSpotLight.shadow.bias = -0.00008;
+    centerSpotLight.shadow.normalBias = 0.06;
+    centerSpotLight.shadow.radius = 4;
     centerSpotLight.target.position.set(0, 0, 0);
     scene.add(centerSpotLight);
     scene.add(centerSpotLight.target);
@@ -740,27 +831,42 @@ const ChessTreadmill = ({ headerHeight }) => {
       return getBoardAssemblyProgress(tilePosition.logicalX - pathScroll);
     }
 
-    const centerHighlightWarm = new THREE.Color(0xfff3e3);
-    const centerHighlightCool = new THREE.Color(0xdfe9ff);
     const spotlightWorldTarget = new THREE.Vector3();
     const spotlightWorldPosition = new THREE.Vector3();
 
     function createChessRoad() {
       const boardGroup = new THREE.Group();
-      const matLight = new THREE.MeshStandardMaterial({
-        color: COLOR_BOARD_LIGHT_WOOD,
-        roughness: 0.48,
-        metalness: 0.05,
-        envMapIntensity: 0.22,
-        transparent: true,
-      });
-      const matDark = new THREE.MeshStandardMaterial({
-        color: COLOR_BOARD_DARK_OAK,
-        roughness: 0.36,
-        metalness: 0.08,
-        envMapIntensity: 0.18,
-        transparent: true,
-      });
+      const createMarbleMaterial = (isDark) => {
+        const map = createSubtleMarbleTexture({
+          baseColor: isDark ? COLOR_BOARD_CHARCOAL : COLOR_BOARD_IVORY,
+          veinColor: isDark ? '#303037' : '#C9C6BC',
+          highlightColor: isDark ? '#4A222B' : '#FFFFFF',
+          veinOpacity: isDark ? 0.14 : 0.16,
+        });
+
+        const material = new THREE.MeshPhysicalMaterial({
+          color: 0xffffff,
+          map,
+          roughness: isDark ? 0.13 : 0.11,
+          metalness: 0,
+          clearcoat: 1,
+          clearcoatRoughness: isDark ? 0.055 : 0.045,
+          reflectivity: 0.78,
+          envMapIntensity: isDark ? 1.34 : 1.16,
+          specularIntensity: isDark ? 0.72 : 0.82,
+          specularColor: isDark ? 0x7a2534 : 0xffe2e6,
+          emissive: isDark ? 0x050305 : 0x0a0405,
+          emissiveIntensity: 0.01,
+          transparent: true,
+          opacity: 1,
+          dithering: true,
+        });
+        material.needsUpdate = true;
+        return material;
+      };
+
+      const matLight = createMarbleMaterial(false);
+      const matDark = createMarbleMaterial(true);
 
       for (let x = CHESS_ROAD_START_COLUMN; x < CHESS_ROAD_LENGTH_TILES; x += 1) {
         for (let z = 0; z < CHESS_ROAD_WIDTH_TILES; z += 1) {
@@ -773,8 +879,11 @@ const ChessTreadmill = ({ headerHeight }) => {
           tile.receiveShadow = true;
           tile.castShadow = true;
 
-          const edgeColor = isDark ? COLOR_EDGE_DARK : COLOR_EDGE_LIGHT;
-          tile.add(new THREE.LineSegments(new THREE.EdgesGeometry(tileGeo), new THREE.LineBasicMaterial({ color: edgeColor, transparent: true })));
+          const edgeColor = isDark ? COLOR_BOARD_EDGE_DARK : COLOR_BOARD_EDGE_LIGHT;
+          tile.add(new THREE.LineSegments(
+            new THREE.EdgesGeometry(tileGeo),
+            new THREE.LineBasicMaterial({ color: edgeColor, transparent: true, opacity: 0.32 }),
+          ));
 
           const originalZ = (z - CHESS_ROAD_CENTER_ROW) * CHESS_ROAD_TILE_SIZE;
           const tileCoord = makeTileCoord(x, z);
@@ -786,7 +895,7 @@ const ChessTreadmill = ({ headerHeight }) => {
             isDark,
             assemblyProgress: 0,
             revealProgress: 0,
-            emissiveColor: new THREE.Color(isDark ? 0x2d1710 : 0x755a3c),
+            emissiveColor: new THREE.Color(isDark ? 0x15070b : 0x2a1016),
           };
           boardTiles.push(tile);
           boardTileLookup.set(getTileCoordKey(tileCoord), tile);
@@ -800,114 +909,52 @@ const ChessTreadmill = ({ headerHeight }) => {
 
     function normalizePieceModel(modelRoot, pieceType) {
       const initialBox = new THREE.Box3().setFromObject(modelRoot);
-      const center = initialBox.getCenter(new THREE.Vector3());
-
-      modelRoot.position.x -= center.x;
-      modelRoot.position.y -= initialBox.min.y;
-      modelRoot.position.z -= center.z;
-
-      const adjustedBox = new THREE.Box3().setFromObject(modelRoot);
-      const size = adjustedBox.getSize(new THREE.Vector3());
+      const size = initialBox.getSize(new THREE.Vector3());
       const targetHeight = (PIECE_HEIGHTS[pieceType] ?? 4) * PIECE_SCALE_MULTIPLIER;
       const scale = size.y > 0 ? targetHeight / size.y : 1;
-      modelRoot.scale.setScalar(scale);
+      modelRoot.scale.multiplyScalar(scale);
+      modelRoot.updateMatrixWorld(true);
+
+      const scaledBox = new THREE.Box3().setFromObject(modelRoot);
+      const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
+
+      modelRoot.position.x -= scaledCenter.x;
+      modelRoot.position.y -= scaledBox.min.y;
+      modelRoot.position.z -= scaledCenter.z;
+      modelRoot.updateMatrixWorld(true);
     }
 
-    const ownerSurfaceProfile = {
-      roughness: 0.24,
-      metalness: 0.04,
-      clearcoat: 0.76,
-      clearcoatRoughness: 0.16,
-      envMapIntensity: 1.28,
-      specularIntensity: 0.62,
-      specularColor: new THREE.Color(0xf6efe6),
-    };
-    const riskSurfaceProfile = {
-      roughness: 0.31,
-      metalness: 0.08,
-      clearcoat: 0.66,
-      clearcoatRoughness: 0.2,
-      envMapIntensity: 1.18,
-      specularIntensity: 0.66,
-      specularColor: new THREE.Color(0xf4d4cc),
-    };
-
     function createPieceInstance(pieceType) {
-      const ownerSource = ownerPieceNodes[pieceType];
-      const riskSource = riskPieceNodes[pieceType];
-      if (!ownerSource || !riskSource) return null;
+      const source = ownerPieceNodes[pieceType] ?? riskPieceNodes[pieceType];
+      if (!source) return null;
 
-      const ownerClone = ownerSource.clone(true);
-      const riskClone = riskSource.clone(true);
-      const ownerMeshes = [];
-      const riskMeshes = [];
+      const pieceClone = source.clone(true);
+      const pieceMeshes = [];
 
-      ownerClone.traverse((child) => {
-        if (child.isMesh) ownerMeshes.push(child);
-      });
-      riskClone.traverse((child) => {
-        if (child.isMesh) riskMeshes.push(child);
+      pieceClone.traverse((child) => {
+        if (child.isMesh) pieceMeshes.push(child);
       });
 
-      ownerMeshes.forEach((mesh, index) => {
+      pieceMeshes.forEach((mesh) => {
         mesh.geometry = mesh.geometry.clone();
         mesh.geometry.computeVertexNormals();
         mesh.geometry.normalizeNormals();
 
-        const sourceMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        const riskMesh = riskMeshes[index] ?? riskMeshes[0];
-        const riskMaterials = riskMesh ? (Array.isArray(riskMesh.material) ? riskMesh.material : [riskMesh.material]) : sourceMaterials;
-        const instanceMaterials = sourceMaterials.map((material, materialIndex) => {
-          const ownerColor = material.color ? material.color.clone() : new THREE.Color(COLOR_WHITE);
-          const riskColor = riskMaterials[materialIndex]?.color ? riskMaterials[materialIndex].color.clone() : ownerColor.clone();
-
-          if (!mesh.userData.themeMaterials) mesh.userData.themeMaterials = [];
-          mesh.userData.themeMaterials[materialIndex] = {
-            ownerColor,
-            riskColor,
-            ownerSurface: ownerSurfaceProfile,
-            riskSurface: riskSurfaceProfile,
-          };
-
-          const initialMix = currentMode === 'risk' ? 1 : 0;
-          const blendedColor = ownerColor.clone().lerp(riskColor, initialMix);
-          const blendedSpecular = ownerSurfaceProfile.specularColor.clone().lerp(riskSurfaceProfile.specularColor, initialMix);
-
-          const premiumMaterial = new THREE.MeshPhysicalMaterial({
-            color: blendedColor,
-            map: material.map ?? null,
-            normalMap: material.normalMap ?? null,
-            aoMap: material.aoMap ?? null,
-            alphaMap: material.alphaMap ?? null,
-            roughnessMap: material.roughnessMap ?? null,
-            metalnessMap: material.metalnessMap ?? null,
-            transparent: true,
-            opacity: 1,
-            side: material.side ?? THREE.FrontSide,
-            roughness: THREE.MathUtils.lerp(ownerSurfaceProfile.roughness, riskSurfaceProfile.roughness, initialMix),
-            metalness: THREE.MathUtils.lerp(ownerSurfaceProfile.metalness, riskSurfaceProfile.metalness, initialMix),
-            clearcoat: THREE.MathUtils.lerp(ownerSurfaceProfile.clearcoat, riskSurfaceProfile.clearcoat, initialMix),
-            clearcoatRoughness: THREE.MathUtils.lerp(ownerSurfaceProfile.clearcoatRoughness, riskSurfaceProfile.clearcoatRoughness, initialMix),
-            envMapIntensity: THREE.MathUtils.lerp(ownerSurfaceProfile.envMapIntensity, riskSurfaceProfile.envMapIntensity, initialMix),
-            specularIntensity: THREE.MathUtils.lerp(ownerSurfaceProfile.specularIntensity, riskSurfaceProfile.specularIntensity, initialMix),
-            specularColor: blendedSpecular,
-            ior: 1.46,
-            reflectivity: 0.7,
-            dithering: true,
-          });
-
-          return premiumMaterial;
-        });
+        const sourceMaterials = Array.isArray(mesh.material)
+          ? mesh.material
+          : [mesh.material].filter(Boolean);
+        const instanceMaterials = (sourceMaterials.length ? sourceMaterials : [null])
+          .map((material) => createPolishedResinPieceMaterial(material));
 
         mesh.material = Array.isArray(mesh.material) ? instanceMaterials : instanceMaterials[0];
         mesh.castShadow = true;
         mesh.receiveShadow = true;
       });
 
-      normalizePieceModel(ownerClone, pieceType);
+      normalizePieceModel(pieceClone, pieceType);
 
       const pieceGroup = new THREE.Group();
-      pieceGroup.add(ownerClone);
+      pieceGroup.add(pieceClone);
       pieceGroup.userData = {
         ...pieceGroup.userData,
         pieceType,
@@ -957,6 +1004,114 @@ const ChessTreadmill = ({ headerHeight }) => {
 
       interactivePieces.push(meshGroup);
       scene.add(meshGroup);
+    }
+
+    const queenPawnClusterLocalOffsets = [
+      { key: 'front-left', position: [-CHESS_ROAD_TILE_SIZE, PIECE_BASE_LIFT, -CHESS_ROAD_TILE_SIZE] },
+      { key: 'front-right', position: [CHESS_ROAD_TILE_SIZE, PIECE_BASE_LIFT, -CHESS_ROAD_TILE_SIZE] },
+      { key: 'back-left', position: [-CHESS_ROAD_TILE_SIZE, PIECE_BASE_LIFT, CHESS_ROAD_TILE_SIZE] },
+      { key: 'back-right', position: [CHESS_ROAD_TILE_SIZE, PIECE_BASE_LIFT, CHESS_ROAD_TILE_SIZE] },
+    ];
+
+    function addQueenPawnClusterDebugMarkers(clusterGroup) {
+      if (!QUEEN_PAWN_CLUSTER_DEBUG) return;
+
+      const markerGeometry = new THREE.SphereGeometry(0.16, 16, 10);
+      const markerMaterial = new THREE.MeshBasicMaterial({
+        color: 0x63f4ff,
+        transparent: true,
+        opacity: 0.85,
+        depthTest: false,
+      });
+
+      queenPawnClusterLocalOffsets.forEach(({ key, position }) => {
+        const marker = new THREE.Mesh(markerGeometry, markerMaterial);
+        marker.name = `QueenPawnCluster_expected_${key}`;
+        marker.position.set(position[0], position[1] + 0.1, position[2]);
+        marker.renderOrder = 100;
+        clusterGroup.add(marker);
+      });
+    }
+
+    function createQueenPawnCluster({ queenBoardCoord, queenUiData, pawnUiData, supportTileCoords }) {
+      const queenPiece = createPieceInstance('queen');
+      const pawnPieces = queenPawnClusterLocalOffsets.map(() => createPieceInstance('pawn'));
+      if (!queenPiece || pawnPieces.some((piece) => !piece)) {
+        if (IS_DEVELOPMENT) {
+          console.warn('QueenPawnCluster could not be created because a queen or pawn GLB node was missing.', {
+            hasQueen: Boolean(queenPiece),
+            pawnCount: pawnPieces.filter(Boolean).length,
+          });
+        }
+        return null;
+      }
+
+      const clusterGroup = new THREE.Group();
+      clusterGroup.name = 'QueenPawnCluster';
+      const basePosition = tileCoordToLogicalPosition(queenBoardCoord.column, queenBoardCoord.row);
+      const resolvedSupportTileCoords = (supportTileCoords ?? buildSquareTileCoords(queenBoardCoord, 1))
+        .filter(Boolean)
+        .map(cloneTileCoord);
+
+      queenPiece.name = 'QueenPawnCluster_queen_anchor';
+      queenPiece.position.set(0, PIECE_BASE_LIFT, 0);
+      queenPiece.userData = {
+        ...queenPiece.userData,
+        uiData: queenUiData,
+        clusterRole: 'queen-anchor',
+      };
+      clusterGroup.add(queenPiece);
+
+      pawnPieces.forEach((pawnPiece, index) => {
+        const { key, position } = queenPawnClusterLocalOffsets[index];
+        pawnPiece.name = `QueenPawnCluster_pawn_${key}`;
+        pawnPiece.position.set(position[0], position[1], position[2]);
+        pawnPiece.userData = {
+          ...pawnPiece.userData,
+          uiData: pawnUiData,
+          clusterRole: `pawn-${key}`,
+        };
+        clusterGroup.add(pawnPiece);
+      });
+
+      addQueenPawnClusterDebugMarkers(clusterGroup);
+
+      clusterGroup.userData = {
+        ...clusterGroup.userData,
+        pieceType: 'queen-pawn-cluster',
+        visualHeight: (PIECE_HEIGHTS.queen ?? 4) * PIECE_SCALE_MULTIPLIER,
+        logicalX: basePosition.logicalX,
+        logicalZ: basePosition.logicalZ,
+        boardCoord: cloneTileCoord(queenBoardCoord),
+        anchorBoardCoord: cloneTileCoord(queenBoardCoord),
+        supportTileCoords: resolvedSupportTileCoords,
+        uiData: queenUiData,
+        childUiData: {
+          queen: queenUiData,
+          pawn: pawnUiData,
+        },
+        positionOffset: null,
+        floatOffset: Math.random() * Math.PI * 2,
+        floatSpeed: 0.001 + Math.random() * 0.0015,
+        revealProgress: 0,
+        dropDist: 0,
+        themeMix: currentMode === 'risk' ? 1 : 0,
+        targetThemeMix: currentMode === 'risk' ? 1 : 0,
+        isQueenPawnCluster: true,
+        queenRef: queenPiece,
+        pawnRefs: pawnPieces,
+        pawnExpectedLocalOffsets: queenPawnClusterLocalOffsets.map(({ key, position }) => ({
+          key,
+          position: new THREE.Vector3(...position),
+        })),
+        tileSize: CHESS_ROAD_TILE_SIZE,
+        pieceYOffset: PIECE_BASE_LIFT,
+      };
+
+      queenPawnCluster = clusterGroup;
+      interactivePieces.push(clusterGroup);
+      scene.add(clusterGroup);
+      return clusterGroup;
     }
 
     function getPieceTransform(piece, pathScroll) {
@@ -1055,24 +1210,12 @@ const ChessTreadmill = ({ headerHeight }) => {
       const queenBoardCoord = makeTileCoord(17, CHESS_ROAD_CENTER_ROW);
       const queenClusterSupportCoords = buildSquareTileCoords(queenBoardCoord, 1);
 
-      placePiece('queen', buildPieceUiData('queen', {
+      const queenData = buildPieceUiData('queen', {
         whiteHeading: 'ECONOMY',
         redHeading: 'ECONOMY',
         whiteSub: 'STRONG MARKET',
         redSub: '[HARSH MARKET]',
-      }), {
-        boardCoord: queenBoardCoord,
-        anchorBoardCoord: queenBoardCoord,
-        lockToAnchorProgress: true,
-        supportTileCoords: queenClusterSupportCoords,
       });
-
-      const pawnTileOffsets = [
-        [-1, -1],
-        [-1, 1],
-        [1, -1],
-        [1, 1],
-      ];
       const pawnData = buildPieceUiData('pawn', {
         whiteHeading: 'TIMING',
         redHeading: 'TIMING',
@@ -1080,16 +1223,11 @@ const ChessTreadmill = ({ headerHeight }) => {
         redSub: '[via pawn differential]\nMore pressure to sell',
       });
 
-      pawnTileOffsets.forEach(([columnOffset, rowOffset]) => {
-        placePiece('pawn', pawnData, {
-          boardCoord: makeTileCoord(
-            queenBoardCoord.column + columnOffset,
-            queenBoardCoord.row + rowOffset,
-          ),
-          anchorBoardCoord: queenBoardCoord,
-          lockToAnchorProgress: true,
-          supportTileCoords: queenClusterSupportCoords,
-        });
+      createQueenPawnCluster({
+        queenBoardCoord,
+        queenUiData: queenData,
+        pawnUiData: pawnData,
+        supportTileCoords: queenClusterSupportCoords,
       });
     }
 
@@ -1296,10 +1434,128 @@ const ChessTreadmill = ({ headerHeight }) => {
 
     const pieceOffsetEuler = new THREE.Euler();
     const pieceOffsetVector = new THREE.Vector3();
-    const pieceColorScratch = new THREE.Color();
-    const pieceHighlightScratch = new THREE.Color();
-    const pieceSpecularScratch = new THREE.Color();
-    const pieceShadowScratch = new THREE.Color(0x14161c);
+    const queenWorldPosition = new THREE.Vector3();
+    const pawnWorldPosition = new THREE.Vector3();
+
+    function applyPieceMaterialState(piece, opacity) {
+      piece.traverse((child) => {
+        if (!child.isMesh || !child.material) return;
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        materials.forEach((material) => {
+          material.opacity = opacity;
+          material.depthWrite = opacity > 0.72;
+          material.needsUpdate = true;
+        });
+      });
+    }
+
+    function validateQueenPawnCluster(pathScroll) {
+      if (!IS_DEVELOPMENT || !queenPawnCluster) return;
+
+      const now = performance.now();
+      if (now - lastQueenPawnClusterValidation < QUEEN_PAWN_CLUSTER_VALIDATION_INTERVAL_MS) return;
+      lastQueenPawnClusterValidation = now;
+
+      const cluster = queenPawnCluster;
+      const {
+        queenRef,
+        pawnRefs = [],
+        pawnExpectedLocalOffsets = [],
+        tileSize,
+        pieceYOffset,
+      } = cluster.userData;
+      const failures = [];
+      const expectedDistance = Math.sqrt(2) * tileSize;
+
+      if (!queenRef) failures.push('missing-queen-ref');
+      if (pawnRefs.length !== 4 || pawnRefs.some((pawn) => !pawn)) failures.push('missing-pawn-ref');
+      if (queenRef?.parent !== cluster) failures.push('queen-parent-is-not-cluster');
+      if (pawnRefs.some((pawn) => pawn?.parent !== cluster)) failures.push('pawn-parent-is-not-cluster');
+      if (pawnRefs.some((pawn) => interactivePieces.includes(pawn)) || interactivePieces.includes(queenRef)) {
+        failures.push('cluster-child-is-independently-interactive');
+      }
+
+      cluster.updateMatrixWorld(true);
+
+      const queenLocalPosition = new THREE.Vector3();
+      if (queenRef) {
+        queenRef.getWorldPosition(queenWorldPosition);
+        queenLocalPosition.copy(queenWorldPosition);
+        cluster.worldToLocal(queenLocalPosition);
+
+        if (queenLocalPosition.distanceTo(new THREE.Vector3(0, pieceYOffset, 0)) > 0.04) {
+          failures.push('queen-is-not-at-local-cluster-origin');
+        }
+      }
+
+      const pawnPositions = [];
+      const localOffsets = [];
+      const offsetSum = new THREE.Vector3();
+
+      pawnRefs.forEach((pawn, index) => {
+        if (!pawn) return;
+        const expected = pawnExpectedLocalOffsets[index]?.position;
+        pawn.getWorldPosition(pawnWorldPosition);
+        const pawnWorld = pawnWorldPosition.clone();
+        const pawnLocal = pawnWorld.clone();
+        cluster.worldToLocal(pawnLocal);
+        const localOffset = pawnLocal.clone().sub(queenLocalPosition);
+        const expectedOffset = expected
+          ? expected.clone().sub(new THREE.Vector3(0, pieceYOffset, 0))
+          : null;
+        const planarDistance = Math.hypot(localOffset.x, localOffset.z);
+
+        pawnPositions.push(formatVectorForDebug(pawnWorld));
+        localOffsets.push(formatVectorForDebug(localOffset));
+        offsetSum.add(localOffset);
+
+        if (!expectedOffset || localOffset.distanceTo(expectedOffset) > 0.08) {
+          failures.push(`pawn-${index}-local-offset-mismatch`);
+        }
+        if (Math.abs(planarDistance - expectedDistance) > 0.08) {
+          failures.push(`pawn-${index}-distance-mismatch`);
+        }
+        if (Math.abs(localOffset.y) > 0.04) {
+          failures.push(`pawn-${index}-y-offset-mismatch`);
+        }
+      });
+
+      if (Math.abs(offsetSum.x) > 0.08 || Math.abs(offsetSum.z) > 0.08) {
+        failures.push('pawn-box-is-not-symmetric-around-queen');
+      }
+
+      if (failures.length > 0) {
+        console.warn('QueenPawnCluster validation failed.', {
+          failures,
+          queenPosition: queenRef ? formatVectorForDebug(queenWorldPosition) : null,
+          pawnPositions,
+          localOffsets,
+          tileSize,
+          expectedDistance: Number(expectedDistance.toFixed(3)),
+          pieceYOffset,
+          parentTransform: {
+            position: formatVectorForDebug(cluster.position),
+            rotation: {
+              x: Number(cluster.rotation.x.toFixed(3)),
+              y: Number(cluster.rotation.y.toFixed(3)),
+              z: Number(cluster.rotation.z.toFixed(3)),
+            },
+            scale: formatVectorForDebug(cluster.scale),
+            matrixWorld: cluster.matrixWorld.toArray().map((value) => Number(value.toFixed(3))),
+          },
+          animationState: {
+            pathScroll: Number(pathScroll.toFixed(3)),
+            scrollPos: Number(scrollPos.toFixed(3)),
+            targetScrollPos: Number(targetScrollPos.toFixed(3)),
+            currentX: Number((cluster.userData.logicalX - pathScroll).toFixed(3)),
+            revealProgress: Number((cluster.userData.revealProgress ?? 0).toFixed(3)),
+            visible: cluster.visible,
+            currentMode,
+            currentHoveredUUID,
+          },
+        });
+      }
+    }
 
     const animate = () => {
       if (disposed || !isVisible) {
@@ -1351,7 +1607,7 @@ const ChessTreadmill = ({ headerHeight }) => {
         tile.material.opacity = fade * introState.p;
         if ('emissive' in tile.material && tile.material.emissive) {
           tile.material.emissive.copy(tile.userData.emissiveColor);
-          tile.material.emissiveIntensity = 0.015 + centerFocus * (tile.userData.isDark ? 0.05 : 0.035);
+          tile.material.emissiveIntensity = 0.006 + centerFocus * (tile.userData.isDark ? 0.026 : 0.018);
         }
         if (tile.children[0]) tile.children[0].material.opacity = (fade * introState.p) * 0.4;
       });
@@ -1378,7 +1634,8 @@ const ChessTreadmill = ({ headerHeight }) => {
         const selectionLift = hasSelectedPiece && isFocused ? 0.26 : 0;
         const nonSelectedOpacity = hasSelectedPiece && !isFocused ? 0.66 : 1;
 
-        piece.position.set(transform.x, transform.y + PIECE_BASE_LIFT + bobbing + selectionLift, transform.z);
+        const pieceBaseLift = piece.userData.isQueenPawnCluster ? 0 : PIECE_BASE_LIFT;
+        piece.position.set(transform.x, transform.y + pieceBaseLift + bobbing + selectionLift, transform.z);
         piece.rotation.set(transform.rx, transform.ry, transform.rz);
         if (piece.userData.positionOffset) {
           pieceOffsetEuler.set(transform.rx, transform.ry, transform.rz);
@@ -1396,66 +1653,7 @@ const ChessTreadmill = ({ headerHeight }) => {
           featuredPiece = piece;
         }
 
-        piece.traverse((child) => {
-          if (child.isMesh && child.userData.themeMaterials) {
-            const materials = Array.isArray(child.material) ? child.material : [child.material];
-            materials.forEach((material, index) => {
-              const themeMaterial = child.userData.themeMaterials[index] ?? child.userData.themeMaterials[0];
-              if (material.color && themeMaterial) {
-                pieceColorScratch.copy(themeMaterial.ownerColor).lerp(themeMaterial.riskColor, piece.userData.themeMix);
-                pieceHighlightScratch.copy(centerHighlightWarm).lerp(centerHighlightCool, clamp01((piece.position.z + 7) / 14));
-                material.color.copy(pieceColorScratch).lerp(pieceHighlightScratch, centerFocus * 0.048 + (isFocused ? 0.075 : 0));
-                if (hasSelectedPiece && !isFocused) {
-                  material.color.lerp(pieceShadowScratch, 0.18);
-                }
-
-                const ownerSurface = themeMaterial.ownerSurface;
-                const riskSurface = themeMaterial.riskSurface;
-                material.roughness = Math.max(
-                  0.14,
-                  THREE.MathUtils.lerp(ownerSurface.roughness, riskSurface.roughness, piece.userData.themeMix)
-                    - centerFocus * 0.05
-                    - (isFocused ? 0.045 : 0)
-                    + (hasSelectedPiece && !isFocused ? 0.05 : 0),
-                );
-                material.metalness = Math.min(
-                  0.18,
-                  THREE.MathUtils.lerp(ownerSurface.metalness, riskSurface.metalness, piece.userData.themeMix)
-                    + centerFocus * 0.028
-                    - (hasSelectedPiece && !isFocused ? 0.02 : 0),
-                );
-                material.clearcoat = Math.min(
-                  1,
-                  THREE.MathUtils.lerp(ownerSurface.clearcoat, riskSurface.clearcoat, piece.userData.themeMix)
-                    + centerFocus * 0.1
-                    + (isFocused ? 0.08 : 0)
-                    - (hasSelectedPiece && !isFocused ? 0.09 : 0),
-                );
-                material.clearcoatRoughness = Math.max(
-                  0.08,
-                  THREE.MathUtils.lerp(ownerSurface.clearcoatRoughness, riskSurface.clearcoatRoughness, piece.userData.themeMix)
-                    - centerFocus * 0.026
-                    + (hasSelectedPiece && !isFocused ? 0.03 : 0),
-                );
-                material.envMapIntensity = THREE.MathUtils.lerp(ownerSurface.envMapIntensity, riskSurface.envMapIntensity, piece.userData.themeMix)
-                  + centerFocus * 0.24
-                  + (isFocused ? 0.12 : 0)
-                  - (hasSelectedPiece && !isFocused ? 0.28 : 0);
-                material.specularIntensity = Math.min(
-                  1,
-                  THREE.MathUtils.lerp(ownerSurface.specularIntensity, riskSurface.specularIntensity, piece.userData.themeMix)
-                    + centerFocus * 0.06
-                    + (isFocused ? 0.04 : 0)
-                    - (hasSelectedPiece && !isFocused ? 0.08 : 0),
-                );
-                pieceSpecularScratch.copy(ownerSurface.specularColor).lerp(riskSurface.specularColor, piece.userData.themeMix);
-                material.specularColor.copy(pieceSpecularScratch);
-              }
-              material.opacity = pieceReveal * nonSelectedOpacity;
-              material.depthWrite = pieceReveal > 0.06;
-            });
-          }
-        });
+        applyPieceMaterialState(piece, pieceReveal * nonSelectedOpacity);
       });
 
       if (hasSelectedPiece) {
@@ -1490,9 +1688,10 @@ const ChessTreadmill = ({ headerHeight }) => {
         coolRimLight.target.position.lerp(spotlightWorldTarget, 0.08);
         displayFillLight.lookAt(spotlightWorldTarget);
         sideFillLight.lookAt(spotlightWorldTarget);
-        centerSpotLight.intensity += ((0.58 + featuredStrength * 1.08) - centerSpotLight.intensity) * 0.12;
+        resinBounceLight.lookAt(spotlightWorldTarget);
+        centerSpotLight.intensity += ((0.62 + featuredStrength * 0.96) - centerSpotLight.intensity) * 0.12;
       } else {
-        centerSpotLight.intensity += (0.52 - centerSpotLight.intensity) * 0.12;
+        centerSpotLight.intensity += (0.48 - centerSpotLight.intensity) * 0.12;
       }
       keyShadowLight.target.updateMatrixWorld();
       warmRimLight.target.updateMatrixWorld();
@@ -1500,6 +1699,7 @@ const ChessTreadmill = ({ headerHeight }) => {
       centerSpotLight.target.updateMatrixWorld();
 
       renderer.render(scene, camera);
+      validateQueenPawnCluster(pathScroll);
       frameId = requestAnimationFrame(animate);
     };
     if (isVisible) startAnimation();
@@ -1530,11 +1730,25 @@ const ChessTreadmill = ({ headerHeight }) => {
       window.removeEventListener('keydown', handleKeyDown);
       if (activeHeaderEl) activeHeaderEl.removeEventListener('click', toggleMode);
       cancelAnimationFrame(frameId);
+      const disposedTextures = new Set();
+      const disposeTexture = (texture) => {
+        if (!texture || disposedTextures.has(texture.uuid)) return;
+        disposedTextures.add(texture.uuid);
+        texture.dispose();
+      };
       scene.traverse((object) => {
         if (object.geometry) object.geometry.dispose();
         if (object.material) {
           const materials = Array.isArray(object.material) ? object.material : [object.material];
-          materials.forEach((material) => material.dispose());
+          materials.forEach((material) => {
+            disposeTexture(material.map);
+            disposeTexture(material.normalMap);
+            disposeTexture(material.roughnessMap);
+            disposeTexture(material.metalnessMap);
+            disposeTexture(material.aoMap);
+            disposeTexture(material.alphaMap);
+            material.dispose();
+          });
         }
       });
       environmentTarget.dispose();
