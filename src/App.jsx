@@ -60,9 +60,9 @@ const PIECE_MATERIAL_PROFILES = {
     fillColor: '#DDEEFF',
     rimColor: '#FFFFFF',
     lineColor: '#F4FAFF',
-    coreOpacity: 0.46,
+    coreOpacity: 0.58,
     rimOpacity: 0.3,
-    lineOpacity: 0.26,
+    lineOpacity: 0.28,
     rimStrength: 1.02,
     lineStrength: 0.86,
     verticalStrength: 0.28,
@@ -74,9 +74,9 @@ const PIECE_MATERIAL_PROFILES = {
     fillColor: '#C82742',
     rimColor: '#FF7C8A',
     lineColor: '#FF5268',
-    coreOpacity: 0.5,
+    coreOpacity: 0.62,
     rimOpacity: 0.34,
-    lineOpacity: 0.3,
+    lineOpacity: 0.32,
     rimStrength: 1.08,
     lineStrength: 0.92,
     verticalStrength: 0.3,
@@ -86,20 +86,32 @@ const PIECE_MATERIAL_PROFILES = {
 };
 
 const CHESS_ROAD_WIDTH_TILES = 5;
-const CHESS_ROAD_LENGTH_TILES = 24;
+const CHESS_ROAD_LENGTH_TILES = 21;
 const CHESS_ROAD_START_COLUMN = -4;
 const CHESS_ROAD_TILE_SIZE = 3.5;
 const CHESS_ROAD_BOARD_THICKNESS = 1.5;
 const CHESS_ROAD_CENTER_ROW = Math.floor(CHESS_ROAD_WIDTH_TILES / 2);
-const TERMINAL_SECTION_START_COLUMN = 16;
-const TERMINAL_TILE_ASSEMBLY_STAGGER = CHESS_ROAD_TILE_SIZE * 0.42;
-const MAX_PATH_SCROLL = 65;
+const MAX_PATH_SCROLL = 65 - (3 * CHESS_ROAD_TILE_SIZE);
+const TREADMILL_LOOP_ENTRY_SCROLL = 43.5;
+const TREADMILL_LOOP_RESET_SCROLL = 4;
+const TREADMILL_LOOP_LENGTH = CHESS_ROAD_LENGTH_TILES * CHESS_ROAD_TILE_SIZE;
+const TREADMILL_LOOP_WRAP_MIN_X = -CHESS_ROAD_TILE_SIZE * 4.5;
+const TREADMILL_WHEEL_SCROLL_SCALE = 0.034;
 const IS_DEVELOPMENT = import.meta.env.DEV;
 const QUEEN_PAWN_FORMATION_DEBUG = false;
 const QUEEN_PAWN_FORMATION_VALIDATION_INTERVAL_MS = 1000;
 const QUEEN_PAWN_FORMATION_SPACING = CHESS_ROAD_TILE_SIZE * 1.18;
 
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
+const positiveModulo = (value, modulus) => ((value % modulus) + modulus) % modulus;
+const getLoopedTreadmillX = (logicalX, pathScroll, shouldLoop) => {
+  const currentX = logicalX - pathScroll;
+  if (!shouldLoop) return currentX;
+
+  return positiveModulo(currentX - TREADMILL_LOOP_WRAP_MIN_X, TREADMILL_LOOP_LENGTH)
+    + TREADMILL_LOOP_WRAP_MIN_X;
+};
+
 const smoothstep = (edge0, edge1, value) => {
   if (edge0 === edge1) return value < edge0 ? 0 : 1;
   const t = clamp01((value - edge0) / (edge1 - edge0));
@@ -181,16 +193,16 @@ const HOLOGRAPHIC_CORE_FRAGMENT_SHADER = `
     float lineMask = max(rings * 0.52, verticals * 0.34);
 
     vec3 bodyColor = mix(uFillColor * 0.42, uColor, 0.72 + surface * 0.18);
-    vec3 finalColor = bodyColor * (0.38 + surface * 0.34);
+    vec3 finalColor = bodyColor * (0.46 + surface * 0.36);
     finalColor += uRimColor * fresnel * uRimStrength * 0.48;
     finalColor += uLineColor * lineMask * uLineStrength * 0.28;
 
-    float alpha = uOpacity * (0.72 + surface * 0.16);
+    float alpha = uOpacity * (0.82 + surface * 0.2);
     alpha += fresnel * uOpacity * uRimStrength * 0.2;
     alpha += lineMask * uOpacity * uLineStrength * 0.08;
 
     if (alpha < 0.01) discard;
-    gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 0.72));
+    gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 0.84));
   }
 `;
 
@@ -272,10 +284,10 @@ const createHolographicPieceMaterial = (sourceMaterial, initialMix = 0) => {
     vertexShader: HOLOGRAPHIC_VERTEX_SHADER,
     fragmentShader: HOLOGRAPHIC_CORE_FRAGMENT_SHADER,
     transparent: true,
-    depthWrite: false,
+    depthWrite: true,
     depthTest: true,
     blending: THREE.NormalBlending,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
     toneMapped: false,
   });
   attachHologramProfiles(material, 'core');
@@ -441,7 +453,6 @@ const createSubtleMarbleTexture = ({ baseColor, veinColor, highlightColor, veinO
 const makeTileCoord = (column, row) => ({ column, row });
 const cloneTileCoord = ({ column, row }) => ({ column, row });
 const getTileCoordKey = ({ column, row }) => `${column}:${row}`;
-const isTerminalTileCoord = (coord) => Boolean(coord && coord.column >= TERMINAL_SECTION_START_COLUMN);
 const tileCoordToLogicalPosition = (column, row) => ({
   logicalX: column * CHESS_ROAD_TILE_SIZE,
   logicalZ: (row - CHESS_ROAD_CENTER_ROW) * CHESS_ROAD_TILE_SIZE,
@@ -972,6 +983,8 @@ const ChessTreadmill = ({ headerHeight }) => {
     let scrollRafId = 0;
     let lastBoardPathScroll = Infinity;
     let lastBoardIntroProgress = Infinity;
+    let lastBoardMode = '';
+    let lastBoardHoveredUUID = null;
     let ownerPieceNodes = {};
     let riskPieceNodes = {};
     let normalizedPiecePrototypes = {};
@@ -982,6 +995,9 @@ const ChessTreadmill = ({ headerHeight }) => {
     let disposed = false;
     let isVisible = false;
     let isAnimating = false;
+    let isBoardHovered = false;
+    let loopScrollUnlocked = false;
+    let pieceSequenceCounter = 0;
 
     const COLOR_BOARD_IVORY = '#8B8E8C';
     const COLOR_BOARD_CHARCOAL = '#111216';
@@ -1032,6 +1048,10 @@ const ChessTreadmill = ({ headerHeight }) => {
     scene.add(rimLight.target);
     const ownerRimLightColor = new THREE.Color(0xe6f7ff);
     const riskRimLightColor = new THREE.Color(0xff7482);
+    const ownerSurfaceGlowColor = new THREE.Color(0xf3f2ee);
+    const riskSurfaceGlowColor = new THREE.Color(0xff4058);
+    const surfaceGlowAccumulator = new THREE.Color();
+    const surfaceGlowPieceColor = new THREE.Color();
 
     const loader = new GLTFLoader();
 
@@ -1039,10 +1059,6 @@ const ChessTreadmill = ({ headerHeight }) => {
       new Promise((resolve, reject) => {
         loader.load(url, resolve, undefined, reject);
       });
-
-    const terminalSectionStartLogicalX = TERMINAL_SECTION_START_COLUMN * CHESS_ROAD_TILE_SIZE;
-    const rigidSectionEuler = new THREE.Euler();
-    const rigidSectionOffsetVector = new THREE.Vector3();
 
     function getPathTransform(baseX, baseZ) {
       let rx = 0;
@@ -1072,33 +1088,17 @@ const ChessTreadmill = ({ headerHeight }) => {
       return { x: pathX, y: pathY, z: pathZ, rx, ry, rz };
     }
 
-    function getRigidSectionTransform(anchorBaseX, localOffsetX, localOffsetZ) {
-      const anchorTransform = getPathTransform(anchorBaseX, 0);
-      rigidSectionEuler.set(anchorTransform.rx, anchorTransform.ry, anchorTransform.rz);
-      rigidSectionOffsetVector.set(localOffsetX, 0, localOffsetZ).applyEuler(rigidSectionEuler);
+    function isTreadmillLooping(pathScroll) {
+      return loopScrollUnlocked && pathScroll >= TREADMILL_LOOP_ENTRY_SCROLL;
+    }
 
-      return {
-        x: anchorTransform.x + rigidSectionOffsetVector.x,
-        y: anchorTransform.y + rigidSectionOffsetVector.y,
-        z: anchorTransform.z + rigidSectionOffsetVector.z,
-        rx: anchorTransform.rx,
-        ry: anchorTransform.ry,
-        rz: anchorTransform.rz,
-      };
+    function getTreadmillCurrentX(logicalX, pathScroll) {
+      return getLoopedTreadmillX(logicalX, pathScroll, isTreadmillLooping(pathScroll));
     }
 
     function getBoardTransformForTileCoord(tileCoord, pathScroll) {
-      if (isTerminalTileCoord(tileCoord)) {
-        const tileDelta = getTileCoordDelta(tileCoord, makeTileCoord(TERMINAL_SECTION_START_COLUMN, CHESS_ROAD_CENTER_ROW));
-        return getRigidSectionTransform(
-          terminalSectionStartLogicalX - pathScroll,
-          tileDelta.column * CHESS_ROAD_TILE_SIZE,
-          tileDelta.row * CHESS_ROAD_TILE_SIZE,
-        );
-      }
-
       const tilePosition = tileCoordToLogicalPosition(tileCoord.column, tileCoord.row);
-      return getPathTransform(tilePosition.logicalX - pathScroll, tilePosition.logicalZ);
+      return getPathTransform(getTreadmillCurrentX(tilePosition.logicalX, pathScroll), tilePosition.logicalZ);
     }
 
     function getUnifiedFade(currentX) {
@@ -1120,14 +1120,8 @@ const ChessTreadmill = ({ headerHeight }) => {
     }
 
     function getTileAssemblyProgress(tileCoord, pathScroll) {
-      if (isTerminalTileCoord(tileCoord)) {
-        const terminalColumnStagger = (tileCoord.column - TERMINAL_SECTION_START_COLUMN) * TERMINAL_TILE_ASSEMBLY_STAGGER;
-        const terminalRowStagger = Math.abs(tileCoord.row - CHESS_ROAD_CENTER_ROW) * 0.18;
-        return getBoardAssemblyProgress(terminalSectionStartLogicalX + terminalColumnStagger + terminalRowStagger - pathScroll);
-      }
-
       const tilePosition = tileCoordToLogicalPosition(tileCoord.column, tileCoord.row);
-      return getBoardAssemblyProgress(tilePosition.logicalX - pathScroll);
+      return getBoardAssemblyProgress(getTreadmillCurrentX(tilePosition.logicalX, pathScroll));
     }
 
     const spotlightWorldTarget = new THREE.Vector3();
@@ -1196,6 +1190,7 @@ const ChessTreadmill = ({ headerHeight }) => {
             assemblyProgress: 0,
             revealProgress: 0,
             emissiveColor: new THREE.Color(isDark ? 0x15070b : 0x2a1016),
+            baseSpecularColor: tileMat.specularColor?.clone?.() ?? new THREE.Color(isDark ? 0x7a2534 : 0xffe2e6),
           };
           boardTiles.push(tile);
           boardTileLookup.set(getTileCoordKey(tileCoord), tile);
@@ -1376,12 +1371,14 @@ const ChessTreadmill = ({ headerHeight }) => {
         formationLocalOffset,
         supportTileCoords: resolvedSupportTileCoords,
         uiData,
+        sequenceIndex: pieceSequenceCounter,
         positionOffset: placementOptions.positionOffset ? new THREE.Vector3(...placementOptions.positionOffset) : null,
         floatOffset: Math.random() * Math.PI * 2,
         floatSpeed: 0.001 + Math.random() * 0.0015,
         revealProgress: 0,
         dropDist: 0,
       };
+      pieceSequenceCounter += 1;
 
       interactivePieces.push(meshGroup);
       scene.add(meshGroup);
@@ -1547,13 +1544,13 @@ const ChessTreadmill = ({ headerHeight }) => {
         };
       }
 
-      return getPathTransform(piece.userData.logicalX - pathScroll, piece.userData.logicalZ);
+      return getPathTransform(getTreadmillCurrentX(piece.userData.logicalX, pathScroll), piece.userData.logicalZ);
     }
 
     function getPieceSupportReveal(piece, pathScroll) {
       const supportTileCoords = piece.userData.supportTileCoords;
       if (!supportTileCoords?.length) {
-        return getBoardAssemblyProgress(piece.userData.logicalX - pathScroll);
+        return getBoardAssemblyProgress(getTreadmillCurrentX(piece.userData.logicalX, pathScroll));
       }
 
       let revealTotal = 0;
@@ -1570,7 +1567,7 @@ const ChessTreadmill = ({ headerHeight }) => {
     }
 
     function getPieceRevealProgress(piece, pathScroll) {
-      const currentX = piece.userData.logicalX - pathScroll;
+      const currentX = getTreadmillCurrentX(piece.userData.logicalX, pathScroll);
       const supportReveal = smoothstep(0.72, 0.96, getPieceSupportReveal(piece, pathScroll));
       return getUnifiedFade(currentX) * introState.p * supportReveal;
     }
@@ -1700,6 +1697,7 @@ const ChessTreadmill = ({ headerHeight }) => {
     }
 
     const onPointerMove = (e) => {
+      isBoardHovered = true;
       interactionMode = 'hover';
       needsRaycast = true;
       if (!renderer.domElement) return;
@@ -1709,6 +1707,7 @@ const ChessTreadmill = ({ headerHeight }) => {
     };
 
     const onPointerLeave = () => {
+      isBoardHovered = false;
       if (interactionMode === 'hover') {
         mouse2D.set(-1000, -1000);
         needsRaycast = true;
@@ -1721,6 +1720,42 @@ const ChessTreadmill = ({ headerHeight }) => {
       }
     };
 
+    function getFullPieceSequence() {
+      const headingsSeen = new Set();
+      return interactivePieces
+        .filter((piece) => {
+          const heading = piece.userData.uiData?.whiteHeading;
+          if (!heading || headingsSeen.has(heading)) return false;
+          headingsSeen.add(heading);
+          return true;
+        })
+        .sort((a, b) => (a.userData.sequenceIndex ?? 0) - (b.userData.sequenceIndex ?? 0));
+    }
+
+    function getFocusedPathScrollForPiece(piece) {
+      const pieceLogicalX = piece.userData.logicalX ?? 0;
+
+      if (!loopScrollUnlocked) {
+        return Math.max(0, Math.min(MAX_PATH_SCROLL, pieceLogicalX));
+      }
+
+      let targetPathScroll = pieceLogicalX;
+      while (targetPathScroll <= scrollPos + 0.35) {
+        targetPathScroll += TREADMILL_LOOP_LENGTH;
+      }
+      return Math.max(TREADMILL_LOOP_ENTRY_SCROLL, targetPathScroll);
+    }
+
+    function scrollPageToPathScroll(pathScrollTarget) {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      const absoluteTop = window.scrollY + rect.top;
+      const scrollDist = rect.height - window.innerHeight;
+      const progress = Math.max(0, Math.min(1, pathScrollTarget / MAX_PATH_SCROLL));
+      const targetY = absoluteTop - getHeaderHeight() + (progress * scrollDist);
+      window.scrollTo({ top: targetY, behavior: 'smooth' });
+    }
+
     const handleKeyDown = (e) => {
       if (e.key === 'Tab') {
         e.preventDefault();
@@ -1731,22 +1766,7 @@ const ChessTreadmill = ({ headerHeight }) => {
         e.preventDefault();
         interactionMode = 'space';
 
-        const uniquePieces = [];
-        const headingsSeen = new Set();
-        const currentPathScroll = Math.min(scrollPos, MAX_PATH_SCROLL);
-
-        interactivePieces.forEach((piece) => {
-          if (
-            piece.userData.uiData &&
-            getPieceRevealProgress(piece, currentPathScroll) > 0.2 &&
-            !headingsSeen.has(piece.userData.uiData.whiteHeading)
-          ) {
-            headingsSeen.add(piece.userData.uiData.whiteHeading);
-            uniquePieces.push(piece);
-          }
-        });
-
-        const sortedPieces = uniquePieces.sort((a, b) => a.userData.logicalX - b.userData.logicalX);
+        const sortedPieces = getFullPieceSequence();
 
         if (sortedPieces.length > 0) {
           let nextIndex = 0;
@@ -1771,22 +1791,32 @@ const ChessTreadmill = ({ headerHeight }) => {
           const nextPiece = sortedPieces[nextIndex];
           pushActivePieceToReact(nextPiece);
 
-          const targetLogicalX = nextPiece.userData.logicalX;
-          const progress = targetLogicalX / 80;
-
-          if (containerRef.current) {
-            const rect = containerRef.current.getBoundingClientRect();
-            const absoluteTop = window.scrollY + rect.top;
-            const scrollDist = rect.height - window.innerHeight;
-            const targetY = absoluteTop - getHeaderHeight() + (progress * scrollDist);
-            window.scrollTo({ top: targetY, behavior: 'smooth' });
+          const pathScrollTarget = getFocusedPathScrollForPiece(nextPiece);
+          targetScrollPos = pathScrollTarget;
+          loopScrollUnlocked = loopScrollUnlocked || pathScrollTarget >= TREADMILL_LOOP_ENTRY_SCROLL;
+          if (pathScrollTarget <= MAX_PATH_SCROLL) {
+            scrollPageToPathScroll(pathScrollTarget);
           }
         }
       }
     };
 
+    const handleWheel = (e) => {
+      if (!isBoardHovered || !loopScrollUnlocked) return;
+
+      e.preventDefault();
+      interactionMode = 'hover';
+      const wheelDelta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+      const minimumLoopScroll = TREADMILL_LOOP_ENTRY_SCROLL;
+      targetScrollPos = Math.max(minimumLoopScroll, targetScrollPos + (wheelDelta * TREADMILL_WHEEL_SCROLL_SCALE));
+      if (scrollPos < minimumLoopScroll) scrollPos = minimumLoopScroll;
+      needsRaycast = true;
+      startAnimation();
+    };
+
     renderer.domElement.addEventListener('pointermove', onPointerMove, { passive: true });
     renderer.domElement.addEventListener('pointerleave', onPointerLeave);
+    renderer.domElement.addEventListener('wheel', handleWheel, { passive: false });
     window.addEventListener('click', onClick);
     window.addEventListener('keydown', handleKeyDown);
 
@@ -1804,7 +1834,12 @@ const ChessTreadmill = ({ headerHeight }) => {
       const scrollDistance = rect.height - window.innerHeight;
       let progress = -(rect.top - getHeaderHeight()) / scrollDistance;
       progress = Math.max(0, Math.min(1, progress));
-      targetScrollPos = progress * 80;
+      const pageTargetScroll = progress * MAX_PATH_SCROLL;
+      if (!isBoardHovered && pageTargetScroll <= TREADMILL_LOOP_RESET_SCROLL) {
+        loopScrollUnlocked = false;
+      }
+      loopScrollUnlocked = loopScrollUnlocked || pageTargetScroll >= TREADMILL_LOOP_ENTRY_SCROLL;
+      targetScrollPos = pageTargetScroll;
     };
 
     const handleScroll = () => {
@@ -2033,7 +2068,7 @@ const ChessTreadmill = ({ headerHeight }) => {
             pathScroll: Number(pathScroll.toFixed(3)),
             scrollPos: Number(scrollPos.toFixed(3)),
             targetScrollPos: Number(targetScrollPos.toFixed(3)),
-            queenCurrentX: Number(((queenRef?.userData.logicalX ?? 0) - pathScroll).toFixed(3)),
+            queenCurrentX: Number((queenRef ? getTreadmillCurrentX(queenRef.userData.logicalX ?? 0, pathScroll) : 0).toFixed(3)),
             queenRevealProgress: Number((queenRef?.userData.revealProgress ?? 0).toFixed(3)),
             currentMode,
             currentHoveredUUID,
@@ -2054,7 +2089,10 @@ const ChessTreadmill = ({ headerHeight }) => {
       scrollPos = Math.abs(scrollDelta) < SCROLL_SETTLE_EPSILON
         ? targetScrollPos
         : scrollPos + scrollDelta * 0.08;
-      const pathScroll = Math.min(scrollPos, MAX_PATH_SCROLL);
+      loopScrollUnlocked = loopScrollUnlocked || scrollPos >= TREADMILL_LOOP_ENTRY_SCROLL;
+      const pathScroll = loopScrollUnlocked
+        ? Math.max(0, scrollPos)
+        : Math.min(scrollPos, MAX_PATH_SCROLL);
       const hasSelectedPiece = currentHoveredUUID !== null;
 
       updateMilestoneText(pathScroll);
@@ -2092,11 +2130,13 @@ const ChessTreadmill = ({ headerHeight }) => {
       const shouldUpdateBoard = (
         Math.abs(pathScroll - lastBoardPathScroll) > BOARD_UPDATE_SCROLL_EPSILON
         || Math.abs(introState.p - lastBoardIntroProgress) > 0.001
+        || currentMode !== lastBoardMode
+        || currentHoveredUUID !== lastBoardHoveredUUID
       );
 
       if (shouldUpdateBoard) {
         boardTiles.forEach((tile) => {
-          const currentX = tile.userData.originalX - pathScroll;
+          const currentX = getTreadmillCurrentX(tile.userData.originalX, pathScroll);
           const transform = getBoardTransformForTileCoord(tile.userData.tileCoord, pathScroll);
           tile.position.set(transform.x, transform.y + (1 - introState.p) * tile.userData.dropDist, transform.z);
           tile.rotation.set(transform.rx, transform.ry, transform.rz);
@@ -2104,24 +2144,66 @@ const ChessTreadmill = ({ headerHeight }) => {
           const fade = getUnifiedFade(currentX);
           const assemblyProgress = getTileAssemblyProgress(tile.userData.tileCoord, pathScroll);
           const centerFocus = getCenterFocus(currentX, 8.75);
+          const currentZ = tile.userData.originalZ;
+          let surfaceGlowStrength = 0;
+          surfaceGlowAccumulator.setRGB(0, 0, 0);
+
+          interactivePieces.forEach((piece) => {
+            const reveal = piece.userData.revealProgress ?? getPieceRevealProgress(piece, pathScroll);
+            if (reveal <= 0.02) return;
+
+            const pieceCurrentX = getTreadmillCurrentX(piece.userData.logicalX, pathScroll);
+            const distance = Math.hypot(pieceCurrentX - currentX, (piece.userData.logicalZ ?? 0) - currentZ);
+            const falloff = Math.pow(clamp01(1 - (distance / (CHESS_ROAD_TILE_SIZE * 2.25))), 2.2);
+            if (falloff <= 0.001) return;
+
+            const isSelectedGlow = currentHoveredUUID && (
+              currentHoveredUUID === piece.uuid
+              || (
+                interactionMode === 'space'
+                && piece.userData.uiData
+                && interactivePieces.find((candidate) => candidate.uuid === currentHoveredUUID)?.userData.uiData?.whiteHeading === piece.userData.uiData.whiteHeading
+              )
+            );
+            const contribution = falloff * reveal * (isSelectedGlow ? 1.22 : 1);
+            surfaceGlowStrength += contribution;
+            surfaceGlowPieceColor.copy(ownerSurfaceGlowColor).lerp(riskSurfaceGlowColor, piece.userData.themeMix ?? (currentMode === 'risk' ? 1 : 0));
+            surfaceGlowPieceColor.multiplyScalar(contribution);
+            surfaceGlowAccumulator.add(surfaceGlowPieceColor);
+          });
+
           tile.userData.assemblyProgress = assemblyProgress;
           tile.userData.revealProgress = fade * introState.p;
           tile.material.opacity = fade * introState.p;
           if ('emissive' in tile.material && tile.material.emissive) {
             tile.material.emissive.copy(tile.userData.emissiveColor);
-            tile.material.emissiveIntensity = 0.003 + centerFocus * (tile.userData.isDark ? 0.014 : 0.01);
+            if (surfaceGlowStrength > 0.001) {
+              surfaceGlowAccumulator.multiplyScalar(1 / surfaceGlowStrength);
+              const surfaceGlowMix = clamp01(surfaceGlowStrength * 0.34);
+              tile.material.emissive.lerp(surfaceGlowAccumulator, surfaceGlowMix);
+              if (tile.material.specularColor) {
+                tile.material.specularColor.copy(tile.userData.baseSpecularColor).lerp(surfaceGlowAccumulator, surfaceGlowMix * 0.32);
+              }
+            } else if (tile.material.specularColor) {
+              tile.material.specularColor.copy(tile.userData.baseSpecularColor);
+            }
+            tile.material.emissiveIntensity = 0.003
+              + centerFocus * (tile.userData.isDark ? 0.014 : 0.01)
+              + clamp01(surfaceGlowStrength) * (tile.userData.isDark ? 0.044 : 0.032);
           }
           if (tile.children[0]) tile.children[0].material.opacity = (fade * introState.p) * 0.4;
         });
         lastBoardPathScroll = pathScroll;
         lastBoardIntroProgress = introState.p;
+        lastBoardMode = currentMode;
+        lastBoardHoveredUUID = currentHoveredUUID;
       }
 
       let featuredPiece = null;
       let featuredStrength = 0;
 
       interactivePieces.forEach((piece) => {
-        const currentX = piece.userData.logicalX - pathScroll;
+        const currentX = getTreadmillCurrentX(piece.userData.logicalX, pathScroll);
         const transform = getPieceTransform(piece, pathScroll);
         const centerFocus = getCenterFocus(currentX, 8.25);
         const pieceReveal = getPieceRevealProgress(piece, pathScroll);
@@ -2172,7 +2254,7 @@ const ChessTreadmill = ({ headerHeight }) => {
 
       if (currentHoveredUUID !== null) {
         const activePiece = interactivePieces.find((piece) => piece.uuid === currentHoveredUUID);
-        if (!activePiece || activePiece.userData.revealProgress <= 0.05) {
+        if (!activePiece || (interactionMode !== 'space' && activePiece.userData.revealProgress <= 0.05)) {
           pushActivePieceToReact(null);
         }
       }
@@ -2233,6 +2315,7 @@ const ChessTreadmill = ({ headerHeight }) => {
       window.removeEventListener('resize', handleResize);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
       renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
+      renderer.domElement.removeEventListener('wheel', handleWheel);
       window.removeEventListener('click', onClick);
       window.removeEventListener('keydown', handleKeyDown);
       if (activeHeaderEl) activeHeaderEl.removeEventListener('click', toggleMode);
@@ -2317,7 +2400,7 @@ const ChessTreadmill = ({ headerHeight }) => {
           <div className="flex flex-col items-center gap-3 text-white">
             <AnimatedTabHint />
             <span className="text-[11px] font-bold uppercase tracking-[0.34em] drop-shadow-lg md:text-sm">
-              TOGGLE VIEW
+              TOGGLE PROXY
             </span>
           </div>
         </div>
