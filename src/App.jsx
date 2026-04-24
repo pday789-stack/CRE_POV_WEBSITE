@@ -60,12 +60,12 @@ const PIECE_MATERIAL_PROFILES = {
     fillColor: '#DDEEFF',
     rimColor: '#FFFFFF',
     lineColor: '#F4FAFF',
-    coreOpacity: 0.58,
-    rimOpacity: 0.3,
-    lineOpacity: 0.28,
-    rimStrength: 1.02,
-    lineStrength: 0.86,
-    verticalStrength: 0.28,
+    coreOpacity: 0.72,
+    rimOpacity: 0.38,
+    lineOpacity: 0.34,
+    rimStrength: 1.14,
+    lineStrength: 0.94,
+    verticalStrength: 0.31,
     ringDensity: 4.05,
     verticalDensity: 18,
   },
@@ -74,12 +74,12 @@ const PIECE_MATERIAL_PROFILES = {
     fillColor: '#C82742',
     rimColor: '#FF7C8A',
     lineColor: '#FF5268',
-    coreOpacity: 0.62,
-    rimOpacity: 0.34,
-    lineOpacity: 0.32,
-    rimStrength: 1.08,
-    lineStrength: 0.92,
-    verticalStrength: 0.3,
+    coreOpacity: 0.76,
+    rimOpacity: 0.43,
+    lineOpacity: 0.38,
+    rimStrength: 1.2,
+    lineStrength: 1.02,
+    verticalStrength: 0.34,
     ringDensity: 4.05,
     verticalDensity: 18,
   },
@@ -94,7 +94,8 @@ const CHESS_ROAD_CENTER_ROW = Math.floor(CHESS_ROAD_WIDTH_TILES / 2);
 const MAX_PATH_SCROLL = 65 - (3 * CHESS_ROAD_TILE_SIZE);
 const TREADMILL_LOOP_ENTRY_SCROLL = 43.5;
 const TREADMILL_LOOP_RESET_SCROLL = 4;
-const TREADMILL_LOOP_LENGTH = CHESS_ROAD_LENGTH_TILES * CHESS_ROAD_TILE_SIZE;
+const TREADMILL_LOOP_TRANSITION_ROWS = 4;
+const TREADMILL_LOOP_LENGTH = (CHESS_ROAD_LENGTH_TILES + TREADMILL_LOOP_TRANSITION_ROWS) * CHESS_ROAD_TILE_SIZE;
 const TREADMILL_LOOP_WRAP_MIN_X = -CHESS_ROAD_TILE_SIZE * 4.5;
 const TREADMILL_WHEEL_SCROLL_SCALE = 0.034;
 const IS_DEVELOPMENT = import.meta.env.DEV;
@@ -194,15 +195,16 @@ const HOLOGRAPHIC_CORE_FRAGMENT_SHADER = `
 
     vec3 bodyColor = mix(uFillColor * 0.42, uColor, 0.72 + surface * 0.18);
     vec3 finalColor = bodyColor * (0.46 + surface * 0.36);
-    finalColor += uRimColor * fresnel * uRimStrength * 0.48;
-    finalColor += uLineColor * lineMask * uLineStrength * 0.28;
+    finalColor += uFillColor * 0.06;
+    finalColor += uRimColor * fresnel * uRimStrength * 0.58;
+    finalColor += uLineColor * lineMask * uLineStrength * 0.34;
 
-    float alpha = uOpacity * (0.82 + surface * 0.2);
-    alpha += fresnel * uOpacity * uRimStrength * 0.2;
-    alpha += lineMask * uOpacity * uLineStrength * 0.08;
+    float alpha = uOpacity * (0.9 + surface * 0.22);
+    alpha += fresnel * uOpacity * uRimStrength * 0.24;
+    alpha += lineMask * uOpacity * uLineStrength * 0.1;
 
     if (alpha < 0.01) discard;
-    gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 0.84));
+    gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 0.92));
   }
 `;
 
@@ -952,16 +954,12 @@ const ChessTreadmill = ({ headerHeight }) => {
   const mountRef = useRef(null);
   const containerRef = useRef(null);
   const headerRef = useRef(null);
-  const headerHeightRef = useRef(headerHeight);
+  const tabHintRef = useRef(null);
 
   const headingRef = useRef(null);
 
   const [pieceInfo, setPieceInfo] = useState(() => createEmptyPieceInfo());
   const [isRiskTheme, setIsRiskTheme] = useState(false);
-
-  useEffect(() => {
-    headerHeightRef.current = headerHeight;
-  }, [headerHeight]);
 
   useEffect(() => {
     if (!mountRef.current) return undefined;
@@ -980,7 +978,6 @@ const ChessTreadmill = ({ headerHeight }) => {
     let needsRaycast = true;
     let lastRaycastTime = 0;
     let lastRaycastScroll = -Infinity;
-    let scrollRafId = 0;
     let lastBoardPathScroll = Infinity;
     let lastBoardIntroProgress = Infinity;
     let lastBoardMode = '';
@@ -1638,8 +1635,6 @@ const ChessTreadmill = ({ headerHeight }) => {
     }
 
     function toggleMode() {
-      if (targetScrollPos >= 100) return;
-
       currentMode = currentMode === 'owner' ? 'risk' : 'owner';
       const isRisk = currentMode === 'risk';
       setIsRiskTheme(isRisk);
@@ -1696,6 +1691,12 @@ const ChessTreadmill = ({ headerHeight }) => {
       }
     }
 
+    const onPointerEnter = () => {
+      isBoardHovered = true;
+      needsRaycast = true;
+      startAnimation();
+    };
+
     const onPointerMove = (e) => {
       isBoardHovered = true;
       interactionMode = 'hover';
@@ -1746,17 +1747,15 @@ const ChessTreadmill = ({ headerHeight }) => {
       return Math.max(TREADMILL_LOOP_ENTRY_SCROLL, targetPathScroll);
     }
 
-    function scrollPageToPathScroll(pathScrollTarget) {
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const absoluteTop = window.scrollY + rect.top;
-      const scrollDist = rect.height - window.innerHeight;
-      const progress = Math.max(0, Math.min(1, pathScrollTarget / MAX_PATH_SCROLL));
-      const targetY = absoluteTop - getHeaderHeight() + (progress * scrollDist);
-      window.scrollTo({ top: targetY, behavior: 'smooth' });
-    }
-
     const handleKeyDown = (e) => {
+      const targetTag = e.target?.tagName;
+      const isEditableTarget = e.target?.isContentEditable
+        || targetTag === 'INPUT'
+        || targetTag === 'TEXTAREA'
+        || targetTag === 'SELECT';
+
+      if (!isVisible || isEditableTarget) return;
+
       if (e.key === 'Tab') {
         e.preventDefault();
         toggleMode();
@@ -1794,27 +1793,37 @@ const ChessTreadmill = ({ headerHeight }) => {
           const pathScrollTarget = getFocusedPathScrollForPiece(nextPiece);
           targetScrollPos = pathScrollTarget;
           loopScrollUnlocked = loopScrollUnlocked || pathScrollTarget >= TREADMILL_LOOP_ENTRY_SCROLL;
-          if (pathScrollTarget <= MAX_PATH_SCROLL) {
-            scrollPageToPathScroll(pathScrollTarget);
-          }
+          needsRaycast = true;
+          startAnimation();
         }
       }
     };
 
     const handleWheel = (e) => {
-      if (!isBoardHovered || !loopScrollUnlocked) return;
+      if (!isBoardHovered) return;
 
       e.preventDefault();
       interactionMode = 'hover';
       const wheelDelta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
-      const minimumLoopScroll = TREADMILL_LOOP_ENTRY_SCROLL;
-      targetScrollPos = Math.max(minimumLoopScroll, targetScrollPos + (wheelDelta * TREADMILL_WHEEL_SCROLL_SCALE));
-      if (scrollPos < minimumLoopScroll) scrollPos = minimumLoopScroll;
+      const nextTargetScroll = targetScrollPos + (wheelDelta * TREADMILL_WHEEL_SCROLL_SCALE);
+
+      if (loopScrollUnlocked) {
+        targetScrollPos = Math.max(0, nextTargetScroll);
+        if (targetScrollPos <= TREADMILL_LOOP_RESET_SCROLL) {
+          loopScrollUnlocked = false;
+          targetScrollPos = Math.max(0, Math.min(MAX_PATH_SCROLL, targetScrollPos));
+        }
+      } else {
+        targetScrollPos = Math.max(0, Math.min(MAX_PATH_SCROLL, nextTargetScroll));
+        loopScrollUnlocked = targetScrollPos >= TREADMILL_LOOP_ENTRY_SCROLL;
+      }
+
       needsRaycast = true;
       startAnimation();
     };
 
     renderer.domElement.addEventListener('pointermove', onPointerMove, { passive: true });
+    renderer.domElement.addEventListener('pointerenter', onPointerEnter, { passive: true });
     renderer.domElement.addEventListener('pointerleave', onPointerLeave);
     renderer.domElement.addEventListener('wheel', handleWheel, { passive: false });
     window.addEventListener('click', onClick);
@@ -1822,32 +1831,10 @@ const ChessTreadmill = ({ headerHeight }) => {
 
     const activeHeaderEl = headerRef.current;
     if (activeHeaderEl) activeHeaderEl.addEventListener('click', toggleMode);
+    const activeTabHintEl = tabHintRef.current;
+    if (activeTabHintEl) activeTabHintEl.addEventListener('click', toggleMode);
 
     updateMilestoneText(0);
-
-    const getHeaderHeight = () => headerHeightRef.current || 0;
-
-    const syncScrollTarget = () => {
-      scrollRafId = 0;
-      if (!containerRef.current) return;
-      const rect = containerRef.current.getBoundingClientRect();
-      const scrollDistance = rect.height - window.innerHeight;
-      let progress = -(rect.top - getHeaderHeight()) / scrollDistance;
-      progress = Math.max(0, Math.min(1, progress));
-      const pageTargetScroll = progress * MAX_PATH_SCROLL;
-      if (!isBoardHovered && pageTargetScroll <= TREADMILL_LOOP_RESET_SCROLL) {
-        loopScrollUnlocked = false;
-      }
-      loopScrollUnlocked = loopScrollUnlocked || pageTargetScroll >= TREADMILL_LOOP_ENTRY_SCROLL;
-      targetScrollPos = pageTargetScroll;
-    };
-
-    const handleScroll = () => {
-      if (scrollRafId !== 0) return;
-      scrollRafId = requestAnimationFrame(syncScrollTarget);
-    };
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    syncScrollTarget();
 
     const startAnimation = () => {
       if (!isAnimating && !disposed) {
@@ -2179,17 +2166,17 @@ const ChessTreadmill = ({ headerHeight }) => {
             tile.material.emissive.copy(tile.userData.emissiveColor);
             if (surfaceGlowStrength > 0.001) {
               surfaceGlowAccumulator.multiplyScalar(1 / surfaceGlowStrength);
-              const surfaceGlowMix = clamp01(surfaceGlowStrength * 0.34);
+              const surfaceGlowMix = clamp01(surfaceGlowStrength * 0.42);
               tile.material.emissive.lerp(surfaceGlowAccumulator, surfaceGlowMix);
               if (tile.material.specularColor) {
-                tile.material.specularColor.copy(tile.userData.baseSpecularColor).lerp(surfaceGlowAccumulator, surfaceGlowMix * 0.32);
+                tile.material.specularColor.copy(tile.userData.baseSpecularColor).lerp(surfaceGlowAccumulator, surfaceGlowMix * 0.38);
               }
             } else if (tile.material.specularColor) {
               tile.material.specularColor.copy(tile.userData.baseSpecularColor);
             }
             tile.material.emissiveIntensity = 0.003
               + centerFocus * (tile.userData.isDark ? 0.014 : 0.01)
-              + clamp01(surfaceGlowStrength) * (tile.userData.isDark ? 0.044 : 0.032);
+              + clamp01(surfaceGlowStrength) * (tile.userData.isDark ? 0.06 : 0.045);
           }
           if (tile.children[0]) tile.children[0].material.opacity = (fade * introState.p) * 0.4;
         });
@@ -2310,15 +2297,15 @@ const ChessTreadmill = ({ headerHeight }) => {
     return () => {
       disposed = true;
       visibilityObserver.disconnect();
-      if (scrollRafId !== 0) cancelAnimationFrame(scrollRafId);
-      window.removeEventListener('scroll', handleScroll);
       window.removeEventListener('resize', handleResize);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
+      renderer.domElement.removeEventListener('pointerenter', onPointerEnter);
       renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
       renderer.domElement.removeEventListener('wheel', handleWheel);
       window.removeEventListener('click', onClick);
       window.removeEventListener('keydown', handleKeyDown);
       if (activeHeaderEl) activeHeaderEl.removeEventListener('click', toggleMode);
+      if (activeTabHintEl) activeTabHintEl.removeEventListener('click', toggleMode);
       cancelAnimationFrame(frameId);
       const disposedTextures = new Set();
       const disposedGeometries = new Set();
@@ -2367,11 +2354,11 @@ const ChessTreadmill = ({ headerHeight }) => {
   const showPieceToggleHint = !showPieceDetail;
 
   return (
-    <div ref={containerRef} className="relative w-full h-[300vh] bg-[#222327]">
+    <div ref={containerRef} className="relative w-full bg-[#222327]">
       <div
-        className="sticky w-full overflow-hidden"
+        className="relative w-full overflow-hidden"
         style={{
-          top: headerHeight,
+          minHeight: `calc(100vh - ${headerHeight}px)`,
           height: `calc(100vh - ${headerHeight}px)`,
         }}
       >
@@ -2392,10 +2379,14 @@ const ChessTreadmill = ({ headerHeight }) => {
         <div className="pointer-events-none absolute inset-0 z-[1] bg-[radial-gradient(circle_at_50%_48%,rgba(255,255,255,0.012)_0%,rgba(27,29,35,0.05)_36%,rgba(10,11,16,0.26)_70%,rgba(4,5,8,0.58)_100%)]" />
 
         <div
+          ref={tabHintRef}
           id="section2-hint"
-          className={`pointer-events-none absolute bottom-10 left-10 z-10 transition-opacity duration-300 ${
-            showHints ? 'opacity-100' : 'opacity-0'
+          className={`absolute bottom-10 left-10 z-10 cursor-pointer transition-opacity duration-300 ${
+            showHints ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
           }`}
+          role="button"
+          tabIndex={showHints ? 0 : -1}
+          aria-label="Toggle proxy"
         >
           <div className="flex flex-col items-center gap-3 text-white">
             <AnimatedTabHint />
