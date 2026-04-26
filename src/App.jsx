@@ -61,11 +61,11 @@ const PIECE_MATERIAL_PROFILES = {
     fillColor: '#CFE7FF',
     rimColor: '#FFFFFF',
     lineColor: '#F4FAFF',
-    coreOpacity: 0.62,
-    rimOpacity: 0.64,
-    lineOpacity: 0.54,
-    rimStrength: 1.68,
-    lineStrength: 1.32,
+    coreOpacity: 0.78,
+    rimOpacity: 0.7,
+    lineOpacity: 0.62,
+    rimStrength: 1.74,
+    lineStrength: 1.42,
     verticalStrength: 0.46,
     ringDensity: 4.35,
     verticalDensity: 22,
@@ -75,11 +75,11 @@ const PIECE_MATERIAL_PROFILES = {
     fillColor: '#C82742',
     rimColor: '#FF7C8A',
     lineColor: '#FF5268',
-    coreOpacity: 0.65,
-    rimOpacity: 0.68,
-    lineOpacity: 0.58,
-    rimStrength: 1.74,
-    lineStrength: 1.38,
+    coreOpacity: 0.76,
+    rimOpacity: 0.72,
+    lineOpacity: 0.64,
+    rimStrength: 1.78,
+    lineStrength: 1.46,
     verticalStrength: 0.5,
     ringDensity: 4.35,
     verticalDensity: 22,
@@ -198,20 +198,23 @@ const HOLOGRAPHIC_CORE_FRAGMENT_SHADER = `
     float verticals = hologramVerticals(vPiecePosition, uVerticalDensity) * uVerticalStrength;
     float lineMask = max(rings * 0.78, verticals * 0.58);
 
-    float frostedBody = pow(surface, 0.58);
-    vec3 bodyColor = mix(uFillColor * 0.34, uColor, 0.56 + surface * 0.16);
-    vec3 finalColor = bodyColor * (0.34 + surface * 0.3);
-    finalColor += uFillColor * frostedBody * (0.06 + lineMask * 0.025);
-    finalColor += uRimColor * rim * uRimStrength * 0.84;
-    finalColor += uRimColor * fresnel * uRimStrength * 0.32;
-    finalColor += uLineColor * lineMask * uLineStrength * (0.52 + rim * 0.24);
+    float frostedBody = pow(surface, 0.48);
+    float innerBody = smoothstep(0.08, 0.72, facing);
+    float surfaceSheen = smoothstep(0.18, 0.96, surface);
+    vec3 acrylicCore = mix(uFillColor * 0.42, uColor, 0.5 + surface * 0.18);
+    vec3 finalColor = acrylicCore * (0.45 + surface * 0.32);
+    finalColor += uFillColor * frostedBody * (0.11 + innerBody * 0.08);
+    finalColor += uRimColor * rim * uRimStrength * 0.9;
+    finalColor += uRimColor * fresnel * uRimStrength * 0.34;
+    finalColor += uLineColor * lineMask * uLineStrength * (0.64 + rim * 0.3 + surfaceSheen * 0.12);
 
-    float alpha = uOpacity * (0.52 + surface * 0.34);
-    alpha += rim * uOpacity * uRimStrength * 0.42;
-    alpha += lineMask * uOpacity * uLineStrength * 0.23;
+    float alpha = uOpacity * (0.68 + surface * 0.24);
+    alpha += innerBody * uOpacity * 0.08;
+    alpha += rim * uOpacity * uRimStrength * 0.34;
+    alpha += lineMask * uOpacity * uLineStrength * 0.18;
 
     if (alpha < 0.01) discard;
-    gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 0.9));
+    gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 0.94));
   }
 `;
 
@@ -398,7 +401,7 @@ function syncHolographicPieceMaterial(material, themeMix, opacity, focusBoost = 
   material.uniforms.uLineColor.value.copy(ownerProfile.lineColor).lerp(riskProfile.lineColor, themeMix);
   material.uniforms.uOpacity.value = lerpProfileValue(ownerProfile, riskProfile, 'coreOpacity', themeMix)
     * visibility
-    * Math.max(0.62, 1 + positiveFocus * 0.04 + negativeFocus * 0.16);
+    * Math.max(0.62, 1 + positiveFocus * 0.12 + negativeFocus * 0.14);
   material.uniforms.uRimStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'rimStrength', themeMix)
     * strengthScale;
   material.uniforms.uLineStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'lineStrength', themeMix)
@@ -422,19 +425,19 @@ function syncHolographicOverlayMaterial(material, themeMix, opacity, focusBoost 
   const profileOpacityKey = isLineLayer ? 'lineOpacity' : 'rimOpacity';
   const overlayOpacity = lerpProfileValue(ownerProfile, riskProfile, profileOpacityKey, themeMix)
     * visibility
-    * Math.max(0.52, 1 + positiveFocus * (isLineLayer ? 0.52 : 0.64) + negativeFocus * (isLineLayer ? 0.32 : 0.38));
+    * Math.max(0.52, 1 + positiveFocus * (isLineLayer ? 0.6 : 0.74) + negativeFocus * (isLineLayer ? 0.3 : 0.36));
 
   if (overlayType === 'rim') {
     material.uniforms.uRimColor.value.copy(ownerProfile.rimColor).lerp(riskProfile.rimColor, themeMix);
     material.uniforms.uOpacity.value = overlayOpacity;
     material.uniforms.uRimPower.value = THREE.MathUtils.lerp(2.55, 2.02, clamp01(positiveFocus));
     material.uniforms.uRimStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'rimStrength', themeMix)
-      * Math.max(0.7, 1 + positiveFocus * 0.34 + negativeFocus * 0.28);
+      * Math.max(0.7, 1 + positiveFocus * 0.42 + negativeFocus * 0.26);
   } else {
     material.uniforms.uLineColor.value.copy(ownerProfile.lineColor).lerp(riskProfile.lineColor, themeMix);
     material.uniforms.uOpacity.value = overlayOpacity;
     material.uniforms.uLineStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'lineStrength', themeMix)
-      * Math.max(0.7, 1 + positiveFocus * 0.36 + negativeFocus * 0.26);
+      * Math.max(0.7, 1 + positiveFocus * 0.44 + negativeFocus * 0.24);
     material.uniforms.uRingDensity.value = lerpProfileValue(ownerProfile, riskProfile, 'ringDensity', themeMix);
     material.uniforms.uVerticalDensity.value = lerpProfileValue(ownerProfile, riskProfile, 'verticalDensity', themeMix);
     material.uniforms.uVerticalStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'verticalStrength', themeMix)
@@ -1279,18 +1282,18 @@ const ChessTreadmill = ({ headerHeight }) => {
       if (!container) return;
 
       const now = performance.now();
-      if (now - lastInteractionCenteringTime < 80) return;
+      if (now - lastInteractionCenteringTime < 180) return;
 
       const rect = container.getBoundingClientRect();
       const viewportCenter = window.innerHeight * 0.5;
       const treadmillCenter = rect.top + rect.height * 0.5;
       const centerDelta = treadmillCenter - viewportCenter;
-      const threshold = Math.max(48, window.innerHeight * 0.08);
+      const threshold = Math.max(32, window.innerHeight * 0.045);
       if (Math.abs(centerDelta) <= threshold) return;
 
       lastInteractionCenteringTime = now;
-      window.scrollBy({
-        top: centerDelta * 0.2,
+      window.scrollTo({
+        top: window.scrollY + centerDelta * 0.78,
         left: 0,
         behavior: 'smooth',
       });
@@ -1820,10 +1823,13 @@ const ChessTreadmill = ({ headerHeight }) => {
       clearTreadmillHoverState();
     };
 
-    const onClick = () => {
-      if (currentHoveredUUID) {
-        toggleMode();
-      }
+    const handleHitAreaClick = (event) => {
+      event.stopPropagation();
+      isBoardHovered = true;
+      interactionMode = 'hover';
+      toggleMode();
+      needsRaycast = true;
+      startAnimation();
     };
 
     function getFullPieceSequence() {
@@ -1941,7 +1947,7 @@ const ChessTreadmill = ({ headerHeight }) => {
     interactionHitArea.addEventListener('pointerenter', onPointerEnter, { passive: true });
     interactionHitArea.addEventListener('pointerleave', onPointerLeave);
     interactionHitArea.addEventListener('wheel', handleWheel, { passive: false });
-    window.addEventListener('click', onClick);
+    interactionHitArea.addEventListener('click', handleHitAreaClick);
     window.addEventListener('keydown', handleKeyDown);
 
     const activeHeaderEl = headerRef.current;
@@ -2478,7 +2484,7 @@ const ChessTreadmill = ({ headerHeight }) => {
       interactionHitArea.removeEventListener('pointerenter', onPointerEnter);
       interactionHitArea.removeEventListener('pointerleave', onPointerLeave);
       interactionHitArea.removeEventListener('wheel', handleWheel);
-      window.removeEventListener('click', onClick);
+      interactionHitArea.removeEventListener('click', handleHitAreaClick);
       window.removeEventListener('keydown', handleKeyDown);
       if (activeHeaderEl) activeHeaderEl.removeEventListener('click', toggleMode);
       if (activeTabHintEl) activeTabHintEl.removeEventListener('click', toggleMode);
