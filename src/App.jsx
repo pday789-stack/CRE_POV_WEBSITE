@@ -61,7 +61,7 @@ const PIECE_MATERIAL_PROFILES = {
     fillColor: '#CFE7FF',
     rimColor: '#FFFFFF',
     lineColor: '#F4FAFF',
-    coreOpacity: 0.5,
+    coreOpacity: 0.62,
     rimOpacity: 0.64,
     lineOpacity: 0.54,
     rimStrength: 1.68,
@@ -75,7 +75,7 @@ const PIECE_MATERIAL_PROFILES = {
     fillColor: '#C82742',
     rimColor: '#FF7C8A',
     lineColor: '#FF5268',
-    coreOpacity: 0.54,
+    coreOpacity: 0.65,
     rimOpacity: 0.68,
     lineOpacity: 0.58,
     rimStrength: 1.74,
@@ -198,19 +198,20 @@ const HOLOGRAPHIC_CORE_FRAGMENT_SHADER = `
     float verticals = hologramVerticals(vPiecePosition, uVerticalDensity) * uVerticalStrength;
     float lineMask = max(rings * 0.78, verticals * 0.58);
 
-    vec3 bodyColor = mix(uFillColor * 0.24, uColor, 0.6 + surface * 0.16);
-    vec3 finalColor = bodyColor * (0.24 + surface * 0.26);
-    finalColor += uFillColor * surface * 0.035;
+    float frostedBody = pow(surface, 0.58);
+    vec3 bodyColor = mix(uFillColor * 0.34, uColor, 0.56 + surface * 0.16);
+    vec3 finalColor = bodyColor * (0.34 + surface * 0.3);
+    finalColor += uFillColor * frostedBody * (0.06 + lineMask * 0.025);
     finalColor += uRimColor * rim * uRimStrength * 0.84;
     finalColor += uRimColor * fresnel * uRimStrength * 0.32;
     finalColor += uLineColor * lineMask * uLineStrength * (0.52 + rim * 0.24);
 
-    float alpha = uOpacity * (0.4 + surface * 0.36);
+    float alpha = uOpacity * (0.52 + surface * 0.34);
     alpha += rim * uOpacity * uRimStrength * 0.42;
     alpha += lineMask * uOpacity * uLineStrength * 0.23;
 
     if (alpha < 0.01) discard;
-    gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 0.88));
+    gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 0.9));
   }
 `;
 
@@ -278,15 +279,16 @@ const SURFACE_GLOW_FRAGMENT_SHADER = `
 
   void main() {
     vec2 centeredUv = vUv - vec2(0.5);
-    float contactFalloff = 1.0 - smoothstep(0.05, 0.58, length(vec2(centeredUv.x * 0.92, centeredUv.y * 1.46)));
-    float reflectionFalloff = 1.0 - smoothstep(0.02, 0.62, length(vec2(centeredUv.x * 1.72, (centeredUv.y + 0.12) * 5.4)));
-    float satinCore = pow(clamp(contactFalloff, 0.0, 1.0), 1.55);
-    float reflectedSheen = pow(clamp(reflectionFalloff, 0.0, 1.0), 2.25) * 0.48;
-    float glow = clamp(satinCore + reflectedSheen, 0.0, 1.0);
+    float radialDistance = length(centeredUv * 2.0);
+    float contactFalloff = 1.0 - smoothstep(0.0, 0.58, radialDistance);
+    float haloFalloff = 1.0 - smoothstep(0.28, 1.04, radialDistance);
+    float satinCore = pow(clamp(contactFalloff, 0.0, 1.0), 1.42);
+    float radialBloom = pow(clamp(haloFalloff, 0.0, 1.0), 2.15) * 0.42;
+    float glow = clamp(satinCore + radialBloom, 0.0, 1.0);
     float alpha = glow * uOpacity;
 
     if (alpha < 0.003) discard;
-    gl_FragColor = vec4(uGlowColor * (0.46 + glow * 0.42), alpha);
+    gl_FragColor = vec4(uGlowColor * (0.42 + glow * 0.48), alpha);
   }
 `;
 
@@ -1093,8 +1095,8 @@ const ChessTreadmill = ({ headerHeight }) => {
     const selectedSurfaceGlowLift = new THREE.Vector3();
     const selectedSurfaceGlowPosition = new THREE.Vector3();
     const selectedSurfaceGlowGeometry = new THREE.PlaneGeometry(
-      CHESS_ROAD_TILE_SIZE * 4.15,
-      CHESS_ROAD_TILE_SIZE * 2.35,
+      CHESS_ROAD_TILE_SIZE * 3.25,
+      CHESS_ROAD_TILE_SIZE * 3.25,
       1,
       1,
     );
@@ -2394,9 +2396,9 @@ const ChessTreadmill = ({ headerHeight }) => {
         selectedSurfaceGlow.position.copy(selectedSurfaceGlowPosition).add(selectedSurfaceGlowLift);
         selectedSurfaceGlow.rotation.copy(selectedSurfaceGlowEuler);
         selectedSurfaceGlow.scale.set(
-          glowPieceCount > 1 ? 1.18 : 0.86,
+          glowPieceCount > 1 ? 1.12 : 0.9,
           1,
-          glowPieceCount > 1 ? 1.08 : 0.78,
+          glowPieceCount > 1 ? 1.12 : 0.9,
         );
         selectedSurfaceGlowColor
           .copy(ownerSurfaceGlowColor)
@@ -2618,7 +2620,7 @@ const ChessTreadmill = ({ headerHeight }) => {
         <div
           ref={treadmillHitAreaRef}
           aria-hidden="true"
-          className="absolute left-[4%] right-[4%] top-[14%] bottom-[33%] z-[6] pointer-events-auto md:left-[8%] md:right-[8%] md:top-[16%] md:bottom-[18%] lg:left-[10%] lg:right-[10%] lg:top-[15%] lg:bottom-[15%]"
+          className="absolute left-[18%] right-[18%] top-[14%] bottom-[33%] z-[6] pointer-events-auto md:left-[22%] md:right-[22%] md:top-[16%] md:bottom-[18%] lg:left-[24%] lg:right-[24%] lg:top-[15%] lg:bottom-[15%]"
           style={{ cursor: TREADMILL_CURSOR_STYLE }}
         />
       </div>
