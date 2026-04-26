@@ -58,31 +58,31 @@ const SCROLL_SETTLE_EPSILON = 0.004;
 const PIECE_MATERIAL_PROFILES = {
   owner: {
     color: '#F3F2EE',
-    fillColor: '#DDEEFF',
+    fillColor: '#CFE7FF',
     rimColor: '#FFFFFF',
     lineColor: '#F4FAFF',
-    coreOpacity: 0.72,
-    rimOpacity: 0.38,
-    lineOpacity: 0.34,
-    rimStrength: 1.14,
-    lineStrength: 0.94,
-    verticalStrength: 0.31,
-    ringDensity: 4.05,
-    verticalDensity: 18,
+    coreOpacity: 0.5,
+    rimOpacity: 0.64,
+    lineOpacity: 0.54,
+    rimStrength: 1.68,
+    lineStrength: 1.32,
+    verticalStrength: 0.46,
+    ringDensity: 4.35,
+    verticalDensity: 22,
   },
   risk: {
     color: '#97182E',
     fillColor: '#C82742',
     rimColor: '#FF7C8A',
     lineColor: '#FF5268',
-    coreOpacity: 0.76,
-    rimOpacity: 0.43,
-    lineOpacity: 0.38,
-    rimStrength: 1.2,
-    lineStrength: 1.02,
-    verticalStrength: 0.34,
-    ringDensity: 4.05,
-    verticalDensity: 18,
+    coreOpacity: 0.54,
+    rimOpacity: 0.68,
+    lineOpacity: 0.58,
+    rimStrength: 1.74,
+    lineStrength: 1.38,
+    verticalStrength: 0.5,
+    ringDensity: 4.35,
+    verticalDensity: 22,
   },
 };
 
@@ -159,13 +159,13 @@ const HOLOGRAPHIC_SHADER_UTILS = `
   }
 
   float hologramRings(vec3 piecePosition, float ringDensity) {
-    return lineFromCoord(piecePosition.y * ringDensity, 0.018, 0.026);
+    return lineFromCoord(piecePosition.y * ringDensity, 0.013, 0.02);
   }
 
   float hologramVerticals(vec3 piecePosition, float verticalDensity) {
     float radius = length(piecePosition.xz);
     float angular = (atan(piecePosition.z, piecePosition.x) + 3.14159265) / 6.2831853;
-    float verticalLine = lineFromCoord(angular * verticalDensity, 0.017, 0.03);
+    float verticalLine = lineFromCoord(angular * verticalDensity, 0.012, 0.022);
     return verticalLine * smoothstep(0.18, 0.7, radius);
   }
 `;
@@ -191,24 +191,26 @@ const HOLOGRAPHIC_CORE_FRAGMENT_SHADER = `
     vec3 normalDirection = normalize(vWorldNormal);
     vec3 viewDirection = normalize(vViewDirection);
     float facing = abs(dot(normalDirection, viewDirection));
-    float fresnel = pow(1.0 - clamp(facing, 0.0, 1.0), 2.35);
-    float surface = pow(clamp(facing, 0.0, 1.0), 0.58);
+    float fresnel = pow(1.0 - clamp(facing, 0.0, 1.0), 2.65);
+    float rim = smoothstep(0.12, 0.86, fresnel);
+    float surface = pow(clamp(facing, 0.0, 1.0), 0.78);
     float rings = hologramRings(vPiecePosition, uRingDensity);
     float verticals = hologramVerticals(vPiecePosition, uVerticalDensity) * uVerticalStrength;
-    float lineMask = max(rings * 0.52, verticals * 0.34);
+    float lineMask = max(rings * 0.78, verticals * 0.58);
 
-    vec3 bodyColor = mix(uFillColor * 0.42, uColor, 0.72 + surface * 0.18);
-    vec3 finalColor = bodyColor * (0.46 + surface * 0.36);
-    finalColor += uFillColor * 0.06;
-    finalColor += uRimColor * fresnel * uRimStrength * 0.58;
-    finalColor += uLineColor * lineMask * uLineStrength * 0.34;
+    vec3 bodyColor = mix(uFillColor * 0.24, uColor, 0.6 + surface * 0.16);
+    vec3 finalColor = bodyColor * (0.24 + surface * 0.26);
+    finalColor += uFillColor * surface * 0.035;
+    finalColor += uRimColor * rim * uRimStrength * 0.84;
+    finalColor += uRimColor * fresnel * uRimStrength * 0.32;
+    finalColor += uLineColor * lineMask * uLineStrength * (0.52 + rim * 0.24);
 
-    float alpha = uOpacity * (0.9 + surface * 0.22);
-    alpha += fresnel * uOpacity * uRimStrength * 0.24;
-    alpha += lineMask * uOpacity * uLineStrength * 0.1;
+    float alpha = uOpacity * (0.4 + surface * 0.36);
+    alpha += rim * uOpacity * uRimStrength * 0.42;
+    alpha += lineMask * uOpacity * uLineStrength * 0.23;
 
     if (alpha < 0.01) discard;
-    gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 0.92));
+    gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 0.88));
   }
 `;
 
@@ -223,11 +225,13 @@ const HOLOGRAPHIC_RIM_FRAGMENT_SHADER = `
   void main() {
     float facing = abs(dot(normalize(vWorldNormal), normalize(vViewDirection)));
     float fresnel = pow(1.0 - clamp(facing, 0.0, 1.0), uRimPower);
-    float rim = smoothstep(0.2, 0.96, fresnel);
+    float crispRim = smoothstep(0.28, 0.9, fresnel);
+    float softHalo = smoothstep(0.06, 0.74, fresnel) * 0.32;
+    float rim = clamp(crispRim + softHalo, 0.0, 1.0);
     float alpha = rim * uOpacity * uRimStrength;
 
     if (alpha < 0.004) discard;
-    gl_FragColor = vec4(uRimColor * (0.88 + rim * 0.42), clamp(alpha, 0.0, 0.78));
+    gl_FragColor = vec4(uRimColor * (1.0 + crispRim * 0.72), clamp(alpha, 0.0, 0.86));
   }
 `;
 
@@ -250,11 +254,11 @@ const HOLOGRAPHIC_LINE_FRAGMENT_SHADER = `
     float rings = hologramRings(vPiecePosition, uRingDensity);
     float verticals = hologramVerticals(vPiecePosition, uVerticalDensity) * uVerticalStrength;
     float lineMask = max(rings, verticals);
-    lineMask *= 0.74 + fresnel * 0.56;
+    lineMask *= 0.9 + fresnel * 0.82;
 
     float alpha = lineMask * uOpacity * uLineStrength;
     if (alpha < 0.004) discard;
-    gl_FragColor = vec4(uLineColor * (0.74 + fresnel * 0.58), clamp(alpha, 0.0, 0.62));
+    gl_FragColor = vec4(uLineColor * (0.95 + fresnel * 0.78), clamp(alpha, 0.0, 0.74));
   }
 `;
 
@@ -384,7 +388,7 @@ function syncHolographicPieceMaterial(material, themeMix, opacity, focusBoost = 
   const positiveFocus = Math.max(0, focusBoost);
   const negativeFocus = Math.min(0, focusBoost);
   const visibility = clamp01(opacity);
-  const strengthScale = Math.max(0.58, 1 + positiveFocus * 0.18 + negativeFocus * 0.34);
+  const strengthScale = Math.max(0.68, 1 + positiveFocus * 0.32 + negativeFocus * 0.28);
 
   material.uniforms.uColor.value.copy(ownerProfile.color).lerp(riskProfile.color, themeMix);
   material.uniforms.uFillColor.value.copy(ownerProfile.fillColor).lerp(riskProfile.fillColor, themeMix);
@@ -392,15 +396,15 @@ function syncHolographicPieceMaterial(material, themeMix, opacity, focusBoost = 
   material.uniforms.uLineColor.value.copy(ownerProfile.lineColor).lerp(riskProfile.lineColor, themeMix);
   material.uniforms.uOpacity.value = lerpProfileValue(ownerProfile, riskProfile, 'coreOpacity', themeMix)
     * visibility
-    * Math.max(0.76, 1 + positiveFocus * 0.08 + negativeFocus * 0.18);
+    * Math.max(0.62, 1 + positiveFocus * 0.04 + negativeFocus * 0.16);
   material.uniforms.uRimStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'rimStrength', themeMix)
     * strengthScale;
   material.uniforms.uLineStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'lineStrength', themeMix)
-    * Math.max(0.62, 1 + positiveFocus * 0.16 + negativeFocus * 0.3);
+    * Math.max(0.7, 1 + positiveFocus * 0.3 + negativeFocus * 0.24);
   material.uniforms.uRingDensity.value = lerpProfileValue(ownerProfile, riskProfile, 'ringDensity', themeMix);
   material.uniforms.uVerticalDensity.value = lerpProfileValue(ownerProfile, riskProfile, 'verticalDensity', themeMix);
   material.uniforms.uVerticalStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'verticalStrength', themeMix)
-    * Math.max(0.62, 1 + positiveFocus * 0.12 + negativeFocus * 0.28);
+    * Math.max(0.68, 1 + positiveFocus * 0.24 + negativeFocus * 0.22);
   material.visible = visibility > 0.01;
 }
 
@@ -416,23 +420,23 @@ function syncHolographicOverlayMaterial(material, themeMix, opacity, focusBoost 
   const profileOpacityKey = isLineLayer ? 'lineOpacity' : 'rimOpacity';
   const overlayOpacity = lerpProfileValue(ownerProfile, riskProfile, profileOpacityKey, themeMix)
     * visibility
-    * Math.max(0.48, 1 + positiveFocus * (isLineLayer ? 0.34 : 0.42) + negativeFocus * (isLineLayer ? 0.38 : 0.48));
+    * Math.max(0.52, 1 + positiveFocus * (isLineLayer ? 0.52 : 0.64) + negativeFocus * (isLineLayer ? 0.32 : 0.38));
 
   if (overlayType === 'rim') {
     material.uniforms.uRimColor.value.copy(ownerProfile.rimColor).lerp(riskProfile.rimColor, themeMix);
     material.uniforms.uOpacity.value = overlayOpacity;
-    material.uniforms.uRimPower.value = THREE.MathUtils.lerp(2.2, 1.72, clamp01(positiveFocus));
+    material.uniforms.uRimPower.value = THREE.MathUtils.lerp(2.55, 2.02, clamp01(positiveFocus));
     material.uniforms.uRimStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'rimStrength', themeMix)
-      * Math.max(0.58, 1 + positiveFocus * 0.22 + negativeFocus * 0.38);
+      * Math.max(0.7, 1 + positiveFocus * 0.34 + negativeFocus * 0.28);
   } else {
     material.uniforms.uLineColor.value.copy(ownerProfile.lineColor).lerp(riskProfile.lineColor, themeMix);
     material.uniforms.uOpacity.value = overlayOpacity;
     material.uniforms.uLineStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'lineStrength', themeMix)
-      * Math.max(0.56, 1 + positiveFocus * 0.24 + negativeFocus * 0.34);
+      * Math.max(0.7, 1 + positiveFocus * 0.36 + negativeFocus * 0.26);
     material.uniforms.uRingDensity.value = lerpProfileValue(ownerProfile, riskProfile, 'ringDensity', themeMix);
     material.uniforms.uVerticalDensity.value = lerpProfileValue(ownerProfile, riskProfile, 'verticalDensity', themeMix);
     material.uniforms.uVerticalStrength.value = lerpProfileValue(ownerProfile, riskProfile, 'verticalStrength', themeMix)
-      * Math.max(0.58, 1 + positiveFocus * 0.12 + negativeFocus * 0.3);
+      * Math.max(0.68, 1 + positiveFocus * 0.26 + negativeFocus * 0.22);
   }
   material.visible = visibility > 0.01;
 }
@@ -984,6 +988,7 @@ const OctahedronScene = () => {
 // --- CHESS TREADMILL COMPONENT (SECTION 2) ---
 const ChessTreadmill = ({ headerHeight }) => {
   const mountRef = useRef(null);
+  const treadmillHitAreaRef = useRef(null);
   const containerRef = useRef(null);
   const headerRef = useRef(null);
   const tabHintRef = useRef(null);
@@ -994,7 +999,7 @@ const ChessTreadmill = ({ headerHeight }) => {
   const [isRiskTheme, setIsRiskTheme] = useState(false);
 
   useEffect(() => {
-    if (!mountRef.current) return undefined;
+    if (!mountRef.current || !treadmillHitAreaRef.current) return undefined;
 
     let boardTiles = [];
     let interactivePieces = [];
@@ -1029,9 +1034,9 @@ const ChessTreadmill = ({ headerHeight }) => {
     let pieceSequenceCounter = 0;
     let selectedSequenceIndex = -1;
 
-    const COLOR_BOARD_IVORY = '#8B8E8C';
-    const COLOR_BOARD_CHARCOAL = '#111216';
-    const COLOR_BOARD_EDGE_LIGHT = 0x747875;
+    const COLOR_BOARD_IVORY = '#777A77';
+    const COLOR_BOARD_CHARCOAL = '#08090D';
+    const COLOR_BOARD_EDGE_LIGHT = 0x626663;
     const COLOR_BOARD_EDGE_DARK = 0x07070a;
 
     const width = mountRef.current.clientWidth;
@@ -1050,27 +1055,28 @@ const ChessTreadmill = ({ headerHeight }) => {
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.shadowMap.enabled = false;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.72;
+    renderer.toneMappingExposure = 0.66;
 
     const currentMount = mountRef.current;
+    const interactionHitArea = treadmillHitAreaRef.current;
     currentMount.appendChild(renderer.domElement);
 
     const pmremGenerator = new THREE.PMREMGenerator(renderer);
     const environmentTarget = pmremGenerator.fromScene(new RoomEnvironment(), 0.04);
     scene.environment = environmentTarget.texture;
-    scene.environmentIntensity = 0.62;
+    scene.environmentIntensity = 0.5;
 
-    const softFillLight = new THREE.HemisphereLight(0xdce9ff, 0x05060a, 0.16);
+    const softFillLight = new THREE.HemisphereLight(0xdce9ff, 0x05060a, 0.1);
     scene.add(softFillLight);
 
-    const keyShadowLight = new THREE.SpotLight(0xfff1df, 0.38, 86, Math.PI / 6.2, 0.88, 1.82);
+    const keyShadowLight = new THREE.SpotLight(0xfff1df, 0.32, 86, Math.PI / 6.2, 0.88, 1.82);
     keyShadowLight.position.set(15, 23, 13);
     keyShadowLight.castShadow = false;
     keyShadowLight.target.position.set(3.5, 2.6, 0);
     scene.add(keyShadowLight);
     scene.add(keyShadowLight.target);
 
-    const rimLight = new THREE.SpotLight(0xd7e8ff, 0.52, 82, Math.PI / 5.8, 0.9, 1.9);
+    const rimLight = new THREE.SpotLight(0xd7e8ff, 0.64, 82, Math.PI / 5.8, 0.9, 1.9);
     rimLight.position.set(-17, 11.5, -14);
     rimLight.castShadow = false;
     rimLight.target.position.set(2, 2.4, 0);
@@ -1079,7 +1085,7 @@ const ChessTreadmill = ({ headerHeight }) => {
     const ownerRimLightColor = new THREE.Color(0xe6f7ff);
     const riskRimLightColor = new THREE.Color(0xff7482);
     const ownerSurfaceGlowColor = new THREE.Color(0xf3f2ee);
-    const riskSurfaceGlowColor = new THREE.Color(0xa32439);
+    const riskSurfaceGlowColor = new THREE.Color(0x97182e);
     const surfaceGlowAccumulator = new THREE.Color();
     const surfaceGlowPieceColor = new THREE.Color();
     const selectedSurfaceGlowColor = new THREE.Color();
@@ -1102,7 +1108,7 @@ const ChessTreadmill = ({ headerHeight }) => {
       fragmentShader: SURFACE_GLOW_FRAGMENT_SHADER,
       transparent: true,
       depthWrite: false,
-      depthTest: true,
+      depthTest: false,
       blending: THREE.AdditiveBlending,
       polygonOffset: true,
       polygonOffsetFactor: -2,
@@ -1115,17 +1121,7 @@ const ChessTreadmill = ({ headerHeight }) => {
     selectedSurfaceGlow.renderOrder = 2;
     selectedSurfaceGlow.visible = false;
     scene.add(selectedSurfaceGlow);
-    let treadmillInteractionBounds = null;
-    let isTreadmillCursorActive = false;
-    const tileSurfaceHalfSize = CHESS_ROAD_TILE_SIZE * 0.5;
-    const tileSurfaceY = CHESS_ROAD_BOARD_THICKNESS * 0.5 + 0.02;
-    const tileSurfaceCorners = [
-      new THREE.Vector3(-tileSurfaceHalfSize, tileSurfaceY, -tileSurfaceHalfSize),
-      new THREE.Vector3(tileSurfaceHalfSize, tileSurfaceY, -tileSurfaceHalfSize),
-      new THREE.Vector3(tileSurfaceHalfSize, tileSurfaceY, tileSurfaceHalfSize),
-      new THREE.Vector3(-tileSurfaceHalfSize, tileSurfaceY, tileSurfaceHalfSize),
-    ];
-    const projectedTileCorner = new THREE.Vector3();
+    let lastInteractionCenteringTime = 0;
 
     const loader = new GLTFLoader();
 
@@ -1216,16 +1212,16 @@ const ChessTreadmill = ({ headerHeight }) => {
         const material = new THREE.MeshPhysicalMaterial({
           color: 0xffffff,
           map,
-          roughness: isDark ? 0.24 : 0.2,
+          roughness: isDark ? 0.26 : 0.22,
           metalness: 0,
-          clearcoat: 0.72,
-          clearcoatRoughness: isDark ? 0.16 : 0.12,
-          reflectivity: 0.42,
-          envMapIntensity: isDark ? 0.74 : 0.62,
-          specularIntensity: isDark ? 0.34 : 0.38,
-          specularColor: isDark ? 0x7a2534 : 0xffe2e6,
-          emissive: isDark ? 0x050305 : 0x0a0405,
-          emissiveIntensity: 0.004,
+          clearcoat: 0.78,
+          clearcoatRoughness: isDark ? 0.14 : 0.11,
+          reflectivity: 0.46,
+          envMapIntensity: isDark ? 0.58 : 0.46,
+          specularIntensity: isDark ? 0.38 : 0.42,
+          specularColor: isDark ? 0x8c2a39 : 0xf4ece6,
+          emissive: isDark ? 0x030204 : 0x080506,
+          emissiveIntensity: 0.0025,
           transparent: true,
           opacity: 1,
           dithering: true,
@@ -1263,8 +1259,8 @@ const ChessTreadmill = ({ headerHeight }) => {
             isDark,
             assemblyProgress: 0,
             revealProgress: 0,
-            emissiveColor: new THREE.Color(isDark ? 0x15070b : 0x2a1016),
-            baseSpecularColor: tileMat.specularColor?.clone?.() ?? new THREE.Color(isDark ? 0x7a2534 : 0xffe2e6),
+            emissiveColor: new THREE.Color(isDark ? 0x100508 : 0x1b0d10),
+            baseSpecularColor: tileMat.specularColor?.clone?.() ?? new THREE.Color(isDark ? 0x8c2a39 : 0xf4ece6),
           };
           boardTiles.push(tile);
           boardTileLookup.set(getTileCoordKey(tileCoord), tile);
@@ -1276,71 +1272,26 @@ const ChessTreadmill = ({ headerHeight }) => {
     }
     createChessRoad();
 
-    function getFallbackTreadmillInteractionBounds() {
-      const rect = currentMount.getBoundingClientRect();
-      return {
-        left: rect.left + rect.width * 0.04,
-        right: rect.right - rect.width * 0.04,
-        top: rect.top + rect.height * 0.14,
-        bottom: rect.top + rect.height * 0.78,
-      };
-    }
+    function centerTreadmillForWheelIntent() {
+      const container = containerRef.current;
+      if (!container) return;
 
-    function updateTreadmillInteractionBounds() {
-      const rect = currentMount.getBoundingClientRect();
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
+      const now = performance.now();
+      if (now - lastInteractionCenteringTime < 80) return;
 
-      boardTiles.forEach((tile) => {
-        if ((tile.userData.revealProgress ?? 0) <= 0.035) return;
+      const rect = container.getBoundingClientRect();
+      const viewportCenter = window.innerHeight * 0.5;
+      const treadmillCenter = rect.top + rect.height * 0.5;
+      const centerDelta = treadmillCenter - viewportCenter;
+      const threshold = Math.max(48, window.innerHeight * 0.08);
+      if (Math.abs(centerDelta) <= threshold) return;
 
-        tile.updateWorldMatrix(true, false);
-        tileSurfaceCorners.forEach((corner) => {
-          projectedTileCorner.copy(corner);
-          tile.localToWorld(projectedTileCorner);
-          projectedTileCorner.project(camera);
-
-          const screenX = rect.left + ((projectedTileCorner.x * 0.5) + 0.5) * rect.width;
-          const screenY = rect.top + ((-projectedTileCorner.y * 0.5) + 0.5) * rect.height;
-          minX = Math.min(minX, screenX);
-          minY = Math.min(minY, screenY);
-          maxX = Math.max(maxX, screenX);
-          maxY = Math.max(maxY, screenY);
-        });
+      lastInteractionCenteringTime = now;
+      window.scrollBy({
+        top: centerDelta * 0.2,
+        left: 0,
+        behavior: 'smooth',
       });
-
-      if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
-        treadmillInteractionBounds = getFallbackTreadmillInteractionBounds();
-        return;
-      }
-
-      const paddingX = Math.max(26, Math.min(54, rect.width * 0.065));
-      const paddingY = Math.max(22, Math.min(48, rect.height * 0.065));
-      treadmillInteractionBounds = {
-        left: Math.max(rect.left, minX - paddingX),
-        right: Math.min(rect.right, maxX + paddingX),
-        top: Math.max(rect.top, minY - paddingY),
-        bottom: Math.min(rect.bottom, maxY + paddingY),
-      };
-    }
-
-    function isPointInsideTreadmillInteractionRegion(clientX, clientY) {
-      const bounds = treadmillInteractionBounds ?? getFallbackTreadmillInteractionBounds();
-      return (
-        clientX >= bounds.left
-        && clientX <= bounds.right
-        && clientY >= bounds.top
-        && clientY <= bounds.bottom
-      );
-    }
-
-    function setTreadmillCursorActive(isActive) {
-      if (isTreadmillCursorActive === isActive) return;
-
-      isTreadmillCursorActive = isActive;
-      currentMount.style.cursor = isActive ? TREADMILL_CURSOR_STYLE : 'default';
     }
 
     function createNormalizedPiecePrototype(sourceRoot, pieceType) {
@@ -1427,7 +1378,7 @@ const ChessTreadmill = ({ headerHeight }) => {
 
         const rimShell = new THREE.Mesh(mesh.geometry, createHolographicRimMaterial(initialMix));
         rimShell.name = `${mesh.name || pieceType}_holographic_rim`;
-        rimShell.scale.setScalar(1.022);
+        rimShell.scale.setScalar(1.03);
         rimShell.renderOrder = 3;
         rimShell.castShadow = false;
         rimShell.receiveShadow = false;
@@ -1841,33 +1792,20 @@ const ChessTreadmill = ({ headerHeight }) => {
 
     function clearTreadmillHoverState() {
       isBoardHovered = false;
-      setTreadmillCursorActive(false);
       if (interactionMode === 'hover') {
         mouse2D.set(-1000, -1000);
         needsRaycast = true;
       }
     }
 
-    const onPointerEnter = (e) => {
-      if (!isPointInsideTreadmillInteractionRegion(e.clientX, e.clientY)) {
-        clearTreadmillHoverState();
-        return;
-      }
-
+    const onPointerEnter = () => {
       isBoardHovered = true;
-      setTreadmillCursorActive(true);
       needsRaycast = true;
       startAnimation();
     };
 
     const onPointerMove = (e) => {
-      if (!isPointInsideTreadmillInteractionRegion(e.clientX, e.clientY)) {
-        clearTreadmillHoverState();
-        return;
-      }
-
       isBoardHovered = true;
-      setTreadmillCursorActive(true);
       interactionMode = 'hover';
       needsRaycast = true;
       if (!renderer.domElement) return;
@@ -1975,15 +1913,10 @@ const ChessTreadmill = ({ headerHeight }) => {
     };
 
     const handleWheel = (e) => {
-      if (!isPointInsideTreadmillInteractionRegion(e.clientX, e.clientY)) {
-        clearTreadmillHoverState();
-        return;
-      }
-
       e.preventDefault();
       isBoardHovered = true;
-      setTreadmillCursorActive(true);
       interactionMode = 'hover';
+      centerTreadmillForWheelIntent();
       const wheelDelta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
       const nextTargetScroll = targetScrollPos + (wheelDelta * TREADMILL_WHEEL_SCROLL_SCALE);
 
@@ -2002,10 +1935,10 @@ const ChessTreadmill = ({ headerHeight }) => {
       startAnimation();
     };
 
-    renderer.domElement.addEventListener('pointermove', onPointerMove, { passive: true });
-    renderer.domElement.addEventListener('pointerenter', onPointerEnter, { passive: true });
-    renderer.domElement.addEventListener('pointerleave', onPointerLeave);
-    renderer.domElement.addEventListener('wheel', handleWheel, { passive: false });
+    interactionHitArea.addEventListener('pointermove', onPointerMove, { passive: true });
+    interactionHitArea.addEventListener('pointerenter', onPointerEnter, { passive: true });
+    interactionHitArea.addEventListener('pointerleave', onPointerLeave);
+    interactionHitArea.addEventListener('wheel', handleWheel, { passive: false });
     window.addEventListener('click', onClick);
     window.addEventListener('keydown', handleKeyDown);
 
@@ -2340,7 +2273,7 @@ const ChessTreadmill = ({ headerHeight }) => {
               );
               if (!isSelectedGlow) return;
 
-              const contribution = falloff * reveal * 0.86;
+              const contribution = falloff * reveal * 1.02;
               surfaceGlowStrength += contribution;
               surfaceGlowPieceColor.copy(ownerSurfaceGlowColor).lerp(riskSurfaceGlowColor, piece.userData.themeMix ?? (currentMode === 'risk' ? 1 : 0));
               surfaceGlowPieceColor.multiplyScalar(contribution);
@@ -2355,21 +2288,20 @@ const ChessTreadmill = ({ headerHeight }) => {
             tile.material.emissive.copy(tile.userData.emissiveColor);
             if (surfaceGlowStrength > 0.001) {
               surfaceGlowAccumulator.multiplyScalar(1 / surfaceGlowStrength);
-              const surfaceGlowMix = clamp01(surfaceGlowStrength * 0.58);
+              const surfaceGlowMix = clamp01(surfaceGlowStrength * 0.68);
               tile.material.emissive.lerp(surfaceGlowAccumulator, surfaceGlowMix);
               if (tile.material.specularColor) {
-                tile.material.specularColor.copy(tile.userData.baseSpecularColor).lerp(surfaceGlowAccumulator, surfaceGlowMix * 0.5);
+                tile.material.specularColor.copy(tile.userData.baseSpecularColor).lerp(surfaceGlowAccumulator, surfaceGlowMix * 0.56);
               }
             } else if (tile.material.specularColor) {
               tile.material.specularColor.copy(tile.userData.baseSpecularColor);
             }
             tile.material.emissiveIntensity = 0.003
               + centerFocus * (tile.userData.isDark ? 0.014 : 0.01)
-              + clamp01(surfaceGlowStrength) * (tile.userData.isDark ? 0.12 : 0.09);
+              + clamp01(surfaceGlowStrength) * (tile.userData.isDark ? 0.16 : 0.12);
           }
           if (tile.children[0]) tile.children[0].material.opacity = (fade * introState.p) * 0.4;
         });
-        updateTreadmillInteractionBounds();
         lastBoardPathScroll = pathScroll;
         lastBoardIntroProgress = introState.p;
         lastBoardMode = currentMode;
@@ -2470,7 +2402,7 @@ const ChessTreadmill = ({ headerHeight }) => {
           .copy(ownerSurfaceGlowColor)
           .lerp(riskSurfaceGlowColor, glowThemeMix);
         selectedSurfaceGlowMaterial.uniforms.uGlowColor.value.copy(selectedSurfaceGlowColor);
-        targetSurfaceGlowOpacity = glowReveal * THREE.MathUtils.lerp(0.22, 0.28, glowThemeMix);
+        targetSurfaceGlowOpacity = glowReveal * THREE.MathUtils.lerp(0.3, 0.36, glowThemeMix);
         selectedSurfaceGlow.visible = true;
       }
 
@@ -2503,11 +2435,11 @@ const ChessTreadmill = ({ headerHeight }) => {
         keyShadowLight.target.position.lerp(spotlightWorldTarget, 0.06);
         rimLight.position.lerp(spotlightWorldPosition, 0.1);
         rimLight.target.position.lerp(spotlightWorldTarget, 0.14);
-        keyShadowLight.intensity += ((0.34 + featuredStrength * 0.12) - keyShadowLight.intensity) * 0.1;
-        rimLight.intensity += ((0.46 + featuredStrength * 0.34) - rimLight.intensity) * 0.12;
+        keyShadowLight.intensity += ((0.28 + featuredStrength * 0.09) - keyShadowLight.intensity) * 0.1;
+        rimLight.intensity += ((0.58 + featuredStrength * 0.44) - rimLight.intensity) * 0.12;
       } else {
-        keyShadowLight.intensity += (0.32 - keyShadowLight.intensity) * 0.1;
-        rimLight.intensity += (0.42 - rimLight.intensity) * 0.12;
+        keyShadowLight.intensity += (0.28 - keyShadowLight.intensity) * 0.1;
+        rimLight.intensity += (0.54 - rimLight.intensity) * 0.12;
       }
       setPremiumShadowPiece(featuredPiece);
       keyShadowLight.target.updateMatrixWorld();
@@ -2533,7 +2465,6 @@ const ChessTreadmill = ({ headerHeight }) => {
       camera.top = d;
       camera.bottom = -d;
       camera.updateProjectionMatrix();
-      treadmillInteractionBounds = null;
     };
     window.addEventListener('resize', handleResize);
 
@@ -2541,10 +2472,10 @@ const ChessTreadmill = ({ headerHeight }) => {
       disposed = true;
       visibilityObserver.disconnect();
       window.removeEventListener('resize', handleResize);
-      renderer.domElement.removeEventListener('pointermove', onPointerMove);
-      renderer.domElement.removeEventListener('pointerenter', onPointerEnter);
-      renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
-      renderer.domElement.removeEventListener('wheel', handleWheel);
+      interactionHitArea.removeEventListener('pointermove', onPointerMove);
+      interactionHitArea.removeEventListener('pointerenter', onPointerEnter);
+      interactionHitArea.removeEventListener('pointerleave', onPointerLeave);
+      interactionHitArea.removeEventListener('wheel', handleWheel);
       window.removeEventListener('click', onClick);
       window.removeEventListener('keydown', handleKeyDown);
       if (activeHeaderEl) activeHeaderEl.removeEventListener('click', toggleMode);
@@ -2684,6 +2615,12 @@ const ChessTreadmill = ({ headerHeight }) => {
         </div>
 
         <div ref={mountRef} className="absolute inset-0 w-full h-full z-0" />
+        <div
+          ref={treadmillHitAreaRef}
+          aria-hidden="true"
+          className="absolute left-[4%] right-[4%] top-[14%] bottom-[33%] z-[6] pointer-events-auto md:left-[8%] md:right-[8%] md:top-[16%] md:bottom-[18%] lg:left-[10%] lg:right-[10%] lg:top-[15%] lg:bottom-[15%]"
+          style={{ cursor: TREADMILL_CURSOR_STYLE }}
+        />
       </div>
     </div>
   );
