@@ -87,16 +87,18 @@ const PIECE_MATERIAL_PROFILES = {
 
 const CHESS_ROAD_WIDTH_TILES = 5;
 const CHESS_ROAD_LENGTH_TILES = 21;
-const CHESS_ROAD_START_COLUMN = -4;
+const TREADMILL_LOOP_TRANSITION_ROWS = 5;
+const CHESS_ROAD_START_COLUMN = -TREADMILL_LOOP_TRANSITION_ROWS;
+const CHESS_ROAD_END_COLUMN = CHESS_ROAD_LENGTH_TILES;
+const CHESS_ROAD_TOTAL_COLUMNS = CHESS_ROAD_END_COLUMN - CHESS_ROAD_START_COLUMN;
 const CHESS_ROAD_TILE_SIZE = 3.5;
 const CHESS_ROAD_BOARD_THICKNESS = 1.5;
 const CHESS_ROAD_CENTER_ROW = Math.floor(CHESS_ROAD_WIDTH_TILES / 2);
 const MAX_PATH_SCROLL = 65 - (3 * CHESS_ROAD_TILE_SIZE);
 const TREADMILL_LOOP_ENTRY_SCROLL = 43.5;
 const TREADMILL_LOOP_RESET_SCROLL = 4;
-const TREADMILL_LOOP_TRANSITION_ROWS = 4;
-const TREADMILL_LOOP_LENGTH = (CHESS_ROAD_LENGTH_TILES + TREADMILL_LOOP_TRANSITION_ROWS) * CHESS_ROAD_TILE_SIZE;
-const TREADMILL_LOOP_WRAP_MIN_X = -CHESS_ROAD_TILE_SIZE * 4.5;
+const TREADMILL_LOOP_LENGTH = CHESS_ROAD_TOTAL_COLUMNS * CHESS_ROAD_TILE_SIZE;
+const TREADMILL_LOOP_WRAP_MIN_X = (CHESS_ROAD_START_COLUMN - 0.5) * CHESS_ROAD_TILE_SIZE;
 const TREADMILL_WHEEL_SCROLL_SCALE = 0.034;
 const IS_DEVELOPMENT = import.meta.env.DEV;
 const QUEEN_PAWN_FORMATION_DEBUG = false;
@@ -251,6 +253,32 @@ const HOLOGRAPHIC_LINE_FRAGMENT_SHADER = `
     float alpha = lineMask * uOpacity * uLineStrength;
     if (alpha < 0.004) discard;
     gl_FragColor = vec4(uLineColor * (0.74 + fresnel * 0.58), clamp(alpha, 0.0, 0.62));
+  }
+`;
+
+const SURFACE_GLOW_VERTEX_SHADER = `
+  varying vec2 vUv;
+
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const SURFACE_GLOW_FRAGMENT_SHADER = `
+  uniform vec3 uGlowColor;
+  uniform float uOpacity;
+  varying vec2 vUv;
+
+  void main() {
+    vec2 centeredUv = vUv - vec2(0.5);
+    float distanceFromCenter = length(centeredUv) * 2.0;
+    float softFalloff = 1.0 - smoothstep(0.08, 1.0, distanceFromCenter);
+    float satinCore = pow(clamp(softFalloff, 0.0, 1.0), 1.85);
+    float alpha = satinCore * uOpacity;
+
+    if (alpha < 0.003) discard;
+    gl_FragColor = vec4(uGlowColor * (0.34 + satinCore * 0.42), alpha);
   }
 `;
 
@@ -995,6 +1023,7 @@ const ChessTreadmill = ({ headerHeight }) => {
     let isBoardHovered = false;
     let loopScrollUnlocked = false;
     let pieceSequenceCounter = 0;
+    let selectedSequenceIndex = -1;
 
     const COLOR_BOARD_IVORY = '#8B8E8C';
     const COLOR_BOARD_CHARCOAL = '#111216';
@@ -1046,9 +1075,32 @@ const ChessTreadmill = ({ headerHeight }) => {
     const ownerRimLightColor = new THREE.Color(0xe6f7ff);
     const riskRimLightColor = new THREE.Color(0xff7482);
     const ownerSurfaceGlowColor = new THREE.Color(0xf3f2ee);
-    const riskSurfaceGlowColor = new THREE.Color(0xff4058);
+    const riskSurfaceGlowColor = new THREE.Color(0xa32439);
     const surfaceGlowAccumulator = new THREE.Color();
     const surfaceGlowPieceColor = new THREE.Color();
+    const selectedSurfaceGlowColor = new THREE.Color();
+    const selectedSurfaceGlowEuler = new THREE.Euler();
+    const selectedSurfaceGlowLift = new THREE.Vector3();
+    const selectedSurfaceGlowGeometry = new THREE.CircleGeometry(CHESS_ROAD_TILE_SIZE * 1.42, 72);
+    selectedSurfaceGlowGeometry.rotateX(-Math.PI / 2);
+    const selectedSurfaceGlowMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uGlowColor: { value: ownerSurfaceGlowColor.clone() },
+        uOpacity: { value: 0 },
+      },
+      vertexShader: SURFACE_GLOW_VERTEX_SHADER,
+      fragmentShader: SURFACE_GLOW_FRAGMENT_SHADER,
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    });
+    const selectedSurfaceGlow = new THREE.Mesh(selectedSurfaceGlowGeometry, selectedSurfaceGlowMaterial);
+    selectedSurfaceGlow.name = 'selected_piece_surface_glow';
+    selectedSurfaceGlow.renderOrder = 2;
+    selectedSurfaceGlow.visible = false;
+    scene.add(selectedSurfaceGlow);
 
     const loader = new GLTFLoader();
 
@@ -1160,7 +1212,7 @@ const ChessTreadmill = ({ headerHeight }) => {
       const matLight = createMarbleMaterial(false);
       const matDark = createMarbleMaterial(true);
 
-      for (let x = CHESS_ROAD_START_COLUMN; x < CHESS_ROAD_LENGTH_TILES; x += 1) {
+      for (let x = CHESS_ROAD_START_COLUMN; x < CHESS_ROAD_END_COLUMN; x += 1) {
         for (let z = 0; z < CHESS_ROAD_WIDTH_TILES; z += 1) {
           const isDark = (x + z) % 2 === 0;
           const tileMat = isDark ? matDark.clone() : matLight.clone();
@@ -1733,15 +1785,29 @@ const ChessTreadmill = ({ headerHeight }) => {
         .sort((a, b) => (a.userData.sequenceIndex ?? 0) - (b.userData.sequenceIndex ?? 0));
     }
 
+    function getSequenceIndexForPiece(sequence, pieceUUID) {
+      if (!pieceUUID) return -1;
+
+      let currentIndex = sequence.findIndex((piece) => piece.uuid === pieceUUID);
+      if (currentIndex !== -1) return currentIndex;
+
+      const piece = interactivePieces.find((candidate) => candidate.uuid === pieceUUID);
+      const heading = piece?.userData.uiData?.whiteHeading;
+      if (!heading) return -1;
+
+      return sequence.findIndex((candidate) => candidate.userData.uiData?.whiteHeading === heading);
+    }
+
     function getFocusedPathScrollForPiece(piece) {
       const pieceLogicalX = piece.userData.logicalX ?? 0;
+      const forwardBaseline = Math.max(scrollPos, targetScrollPos);
 
-      if (!loopScrollUnlocked) {
+      if (!loopScrollUnlocked && pieceLogicalX >= forwardBaseline - 0.35) {
         return Math.max(0, Math.min(MAX_PATH_SCROLL, pieceLogicalX));
       }
 
       let targetPathScroll = pieceLogicalX;
-      while (targetPathScroll <= scrollPos + 0.35) {
+      while (targetPathScroll <= forwardBaseline + 0.35) {
         targetPathScroll += TREADMILL_LOOP_LENGTH;
       }
       return Math.max(TREADMILL_LOOP_ENTRY_SCROLL, targetPathScroll);
@@ -1768,24 +1834,15 @@ const ChessTreadmill = ({ headerHeight }) => {
         const sortedPieces = getFullPieceSequence();
 
         if (sortedPieces.length > 0) {
-          let nextIndex = 0;
-
-          if (currentHoveredUUID !== null) {
-            let currentIndex = sortedPieces.findIndex((piece) => piece.uuid === currentHoveredUUID);
-
-            if (currentIndex === -1) {
-              const hoveredPieceObj = interactivePieces.find((piece) => piece.uuid === currentHoveredUUID);
-              if (hoveredPieceObj && hoveredPieceObj.userData.uiData) {
-                currentIndex = sortedPieces.findIndex(
-                  (piece) => piece.userData.uiData.whiteHeading === hoveredPieceObj.userData.uiData.whiteHeading,
-                );
-              }
-            }
-
-            if (currentIndex !== -1) {
-              nextIndex = (currentIndex + 1) % sortedPieces.length;
-            }
+          const currentSequenceIndex = getSequenceIndexForPiece(sortedPieces, currentHoveredUUID);
+          if (currentSequenceIndex !== -1) {
+            selectedSequenceIndex = currentSequenceIndex;
           }
+
+          const nextIndex = selectedSequenceIndex === -1
+            ? 0
+            : (selectedSequenceIndex + 1) % sortedPieces.length;
+          selectedSequenceIndex = nextIndex;
 
           const nextPiece = sortedPieces[nextIndex];
           pushActivePieceToReact(nextPiece);
@@ -2081,6 +2138,10 @@ const ChessTreadmill = ({ headerHeight }) => {
         ? Math.max(0, scrollPos)
         : Math.min(scrollPos, MAX_PATH_SCROLL);
       const hasSelectedPiece = currentHoveredUUID !== null;
+      const selectedPieceForGlow = hasSelectedPiece
+        ? interactivePieces.find((piece) => piece.uuid === currentHoveredUUID)
+        : null;
+      const selectedGlowHeading = selectedPieceForGlow?.userData.uiData?.whiteHeading ?? null;
 
       updateMilestoneText(pathScroll);
 
@@ -2144,15 +2205,18 @@ const ChessTreadmill = ({ headerHeight }) => {
             const falloff = Math.pow(clamp01(1 - (distance / (CHESS_ROAD_TILE_SIZE * 2.25))), 2.2);
             if (falloff <= 0.001) return;
 
-            const isSelectedGlow = currentHoveredUUID && (
+            const isSelectedGlow = hasSelectedPiece && (
               currentHoveredUUID === piece.uuid
               || (
                 interactionMode === 'space'
+                && selectedGlowHeading
                 && piece.userData.uiData
-                && interactivePieces.find((candidate) => candidate.uuid === currentHoveredUUID)?.userData.uiData?.whiteHeading === piece.userData.uiData.whiteHeading
+                && selectedGlowHeading === piece.userData.uiData.whiteHeading
               )
             );
-            const contribution = falloff * reveal * (isSelectedGlow ? 1.22 : 1);
+            if (hasSelectedPiece && !isSelectedGlow) return;
+
+            const contribution = falloff * reveal * (isSelectedGlow ? 0.54 : 0.08);
             surfaceGlowStrength += contribution;
             surfaceGlowPieceColor.copy(ownerSurfaceGlowColor).lerp(riskSurfaceGlowColor, piece.userData.themeMix ?? (currentMode === 'risk' ? 1 : 0));
             surfaceGlowPieceColor.multiplyScalar(contribution);
@@ -2237,6 +2301,32 @@ const ChessTreadmill = ({ headerHeight }) => {
           featuredPiece = selectedPiece;
           featuredStrength = Math.max(featuredStrength, 0.88);
         }
+      }
+
+      let targetSurfaceGlowOpacity = 0;
+      if (selectedPieceForGlow && selectedPieceForGlow.userData.revealProgress > 0.08) {
+        const glowTransform = getPieceTransform(selectedPieceForGlow, pathScroll);
+        selectedSurfaceGlowEuler.set(glowTransform.rx, glowTransform.ry, glowTransform.rz);
+        selectedSurfaceGlowLift
+          .set(0, CHESS_ROAD_BOARD_THICKNESS * 0.5 + 0.026, 0)
+          .applyEuler(selectedSurfaceGlowEuler);
+        selectedSurfaceGlow.position.set(glowTransform.x, glowTransform.y, glowTransform.z).add(selectedSurfaceGlowLift);
+        selectedSurfaceGlow.rotation.copy(selectedSurfaceGlowEuler);
+        selectedSurfaceGlow.scale.set(1.18, 1, 0.76);
+        selectedSurfaceGlowColor
+          .copy(ownerSurfaceGlowColor)
+          .lerp(riskSurfaceGlowColor, selectedPieceForGlow.userData.themeMix ?? (currentMode === 'risk' ? 1 : 0));
+        selectedSurfaceGlowMaterial.uniforms.uGlowColor.value.copy(selectedSurfaceGlowColor);
+        targetSurfaceGlowOpacity = selectedPieceForGlow.userData.revealProgress
+          * THREE.MathUtils.lerp(0.115, 0.15, selectedPieceForGlow.userData.themeMix ?? (currentMode === 'risk' ? 1 : 0));
+        selectedSurfaceGlow.visible = true;
+      }
+
+      selectedSurfaceGlowMaterial.uniforms.uOpacity.value += (
+        targetSurfaceGlowOpacity - selectedSurfaceGlowMaterial.uniforms.uOpacity.value
+      ) * 0.16;
+      if (targetSurfaceGlowOpacity <= 0 && selectedSurfaceGlowMaterial.uniforms.uOpacity.value < 0.004) {
+        selectedSurfaceGlow.visible = false;
       }
 
       if (currentHoveredUUID !== null) {
@@ -2397,21 +2487,21 @@ const ChessTreadmill = ({ headerHeight }) => {
         </div>
 
         <div
-          className={`pointer-events-none absolute inset-x-0 top-0 bottom-0 z-20 flex items-center justify-between px-8 md:px-10 lg:px-14 transition-all duration-500 ease-out ${
+          className={`pointer-events-none absolute inset-0 z-20 transition-all duration-500 ease-out ${
             showPieceDetail ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
           }`}
         >
-          <div className="max-w-[min(40vw,440px)]">
+          <div className="absolute bottom-[7.25rem] left-7 max-w-[min(78vw,430px)] sm:left-12 sm:bottom-[8rem] md:left-20 md:bottom-[8.8rem] lg:left-24">
             {activePieceHeading ? (
               <h3
-                className="text-[1.6rem] font-bold uppercase tracking-[0.18em] leading-[1.05] drop-shadow-[0_10px_28px_rgba(0,0,0,0.38)] md:text-[2.55rem]"
+                className="text-[1.45rem] font-bold uppercase tracking-[0.18em] leading-[1.05] drop-shadow-[0_10px_28px_rgba(0,0,0,0.38)] sm:text-[1.7rem] md:text-[2.35rem] lg:text-[2.55rem]"
                 style={{ color: isRiskTheme ? '#BB364F' : '#F3F2EE' }}
               >
                 {activePieceHeading}
               </h3>
             ) : null}
             {activePieceSub ? (
-              <p className="mt-4 whitespace-pre-line text-[0.98rem] font-medium leading-[1.7] tracking-[0.03em] text-white/78 md:text-[1.12rem]">
+              <p className="mt-3 whitespace-pre-line text-[0.92rem] font-medium leading-[1.65] tracking-[0.03em] text-white/78 sm:text-[1rem] md:mt-4 md:text-[1.1rem]">
                 {activePieceSub}
               </p>
             ) : null}
@@ -2421,9 +2511,9 @@ const ChessTreadmill = ({ headerHeight }) => {
             <img
               src={activePieceImage}
               alt={activePieceHeading || 'Focused chess piece'}
-              className="h-auto w-[220px] object-contain drop-shadow-[0_22px_44px_rgba(0,0,0,0.44)] transition-all duration-500 ease-out md:w-[300px] lg:w-[350px]"
+              className="absolute right-7 top-[6.25rem] h-auto w-[150px] object-contain drop-shadow-[0_22px_44px_rgba(0,0,0,0.44)] transition-all duration-500 ease-out sm:right-12 sm:top-[7rem] sm:w-[190px] md:right-24 md:top-[8rem] md:w-[285px] lg:right-28 lg:top-[8.8rem] lg:w-[330px]"
             />
-          ) : <div className="w-[220px] md:w-[300px] lg:w-[350px]" />}
+          ) : null}
         </div>
 
         <div
