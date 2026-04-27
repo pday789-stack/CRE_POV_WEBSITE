@@ -3,11 +3,11 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
-import logoSvg from '../4.27 UPLOAD/NEW LOGO.svg';
-import leagueSpartanBg from '../CRE POV WEBSITE ASSETS/League Spartan.png';
+import logoSvg from '../4.27 ASSETS/BRAND NEW LOGO.svg';
+import heroImage from '../4.27 ASSETS/BRAND NEW HERO.png';
 import sunglassesCursorPng from '../CRE POV WEBSITE ASSETS/sunglasses-cursor.png';
-import comparisonWhitePawnPng from '../4.27 UPLOAD/WHITE PAWN.png';
-import comparisonRedPawnPng from '../4.27 UPLOAD/RED PAWN.png';
+import comparisonWhitePawnSvg from '../4.27 ASSETS/WHITE PAWN.svg';
+import comparisonRedPawnSvg from '../4.27 ASSETS/RED PAWN.svg';
 import whiteChessPiecesGlb from '../CRE POV WEBSITE ASSETS/White_Chess_Pieces.glb';
 import redChessPiecesGlb from '../CRE POV WEBSITE ASSETS/Red_Chess_Pieces.glb';
 import puwWhiteKing from '../CRE POV WEBSITE ASSETS/PUW_WHITE_KING.svg';
@@ -105,9 +105,9 @@ const TREADMILL_LOOP_WRAP_MIN_X = (CHESS_ROAD_START_COLUMN - 0.5) * CHESS_ROAD_T
 const TREADMILL_WHEEL_SCROLL_SCALE = 0.034;
 const TREADMILL_CURSOR_STYLE = `url("${sunglassesCursorPng}") 32 12, pointer`;
 const IS_DEVELOPMENT = import.meta.env.DEV;
-const QUEEN_PAWN_FORMATION_DEBUG = false;
-const QUEEN_PAWN_FORMATION_VALIDATION_INTERVAL_MS = 1000;
-const QUEEN_PAWN_FORMATION_SPACING = CHESS_ROAD_TILE_SIZE * 1.18;
+const QUEEN_PAWN_ROW_DEBUG = false;
+const QUEEN_PAWN_ROW_VALIDATION_INTERVAL_MS = 1000;
+const QUEEN_PAWN_ROW_COLUMN_OFFSET = 1;
 
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 const positiveModulo = (value, modulus) => ((value % modulus) + modulus) % modulus;
@@ -653,8 +653,8 @@ const HeaderLogo = () => (
     <img
       src={logoSvg}
       alt="CRE POV"
-      className="absolute left-0 top-0 h-[333.333%] w-auto max-w-none select-none"
-      style={{ transform: 'translateY(-64.1716%)' }}
+      className="absolute left-0 top-0 h-[322.6%] w-auto max-w-none select-none"
+      style={{ transform: 'translateY(-34.6%)' }}
       draggable="false"
     />
   </span>
@@ -664,35 +664,29 @@ const PawnComparisonIcon = ({ src, label }) => (
   <img
     src={src}
     alt={label}
-    className="h-12 w-12 rounded-[6px] object-contain shadow-[0_12px_26px_rgba(0,0,0,0.24)] ring-1 ring-white/12 sm:h-14 sm:w-14 md:h-16 md:w-16"
+    className="h-12 w-12 object-contain drop-shadow-[0_12px_24px_rgba(0,0,0,0.34)] sm:h-14 sm:w-14 md:h-16 md:w-16"
     draggable="false"
   />
 );
 
-const PawnDifferentialComparison = () => (
-  <div className="mt-4 grid gap-4 text-white/88 sm:mt-5 md:gap-5">
-    <div className="grid gap-2.5">
+const PawnDifferentialComparison = ({ isRiskTheme }) => {
+  const selectedPawnState = isRiskTheme
+    ? { copy: 'RED: More sale pressure', operator: '<' }
+    : { copy: 'WHITE: Less sale pressure', operator: '>' };
+
+  return (
+    <div className="mt-4 grid gap-2.5 text-white/88 sm:mt-5">
       <p className="text-[0.82rem] font-bold tracking-[0.18em] text-white/82 sm:text-[0.9rem] md:text-[1rem]">
-        WHITE: Less sale pressure
+        {selectedPawnState.copy}
       </p>
       <div className="flex items-center gap-3 text-2xl font-bold text-white sm:text-3xl">
-        <PawnComparisonIcon src={comparisonWhitePawnPng} label="White pawn" />
-        <span aria-hidden="true">&gt;</span>
-        <PawnComparisonIcon src={comparisonRedPawnPng} label="Red pawn" />
+        <PawnComparisonIcon src={comparisonWhitePawnSvg} label="White pawn" />
+        <span aria-hidden="true">{selectedPawnState.operator}</span>
+        <PawnComparisonIcon src={comparisonRedPawnSvg} label="Red pawn" />
       </div>
     </div>
-    <div className="grid gap-2.5">
-      <p className="text-[0.82rem] font-bold tracking-[0.18em] text-white/82 sm:text-[0.9rem] md:text-[1rem]">
-        RED: More sale pressure
-      </p>
-      <div className="flex items-center gap-3 text-2xl font-bold text-white sm:text-3xl">
-        <PawnComparisonIcon src={comparisonWhitePawnPng} label="White pawn" />
-        <span aria-hidden="true">&lt;</span>
-        <PawnComparisonIcon src={comparisonRedPawnPng} label="Red pawn" />
-      </div>
-    </div>
-  </div>
-);
+  );
+};
 
 const HEADER_MENUS = [
   {
@@ -1077,8 +1071,8 @@ const ChessTreadmill = ({ headerHeight }) => {
     let riskPieceNodes = {};
     let normalizedPiecePrototypes = {};
     let boardTileLookup = new Map();
-    let queenPawnFormation = null;
-    let lastQueenPawnFormationValidation = 0;
+    let queenPawnSequence = null;
+    let lastQueenPawnRowValidation = 0;
     let frameId;
     let disposed = false;
     let isVisible = false;
@@ -1478,22 +1472,8 @@ const ChessTreadmill = ({ headerHeight }) => {
       const anchorBoardCoord = placementOptions.anchorBoardCoord
         ? cloneTileCoord(placementOptions.anchorBoardCoord)
         : boardCoord;
-      const formationAnchorBoardCoord = placementOptions.formationAnchorBoardCoord
-        ? cloneTileCoord(placementOptions.formationAnchorBoardCoord)
-        : null;
-      const formationLocalOffset = placementOptions.formationLocalOffset
-        ? new THREE.Vector3(...placementOptions.formationLocalOffset)
-        : null;
       const logicalReferenceCoord = placementOptions.lockToAnchorProgress && anchorBoardCoord ? anchorBoardCoord : boardCoord;
-      const formationAnchorPosition = formationAnchorBoardCoord
-        ? tileCoordToLogicalPosition(formationAnchorBoardCoord.column, formationAnchorBoardCoord.row)
-        : null;
-      const basePosition = formationAnchorPosition && formationLocalOffset
-        ? {
-            logicalX: formationAnchorPosition.logicalX + formationLocalOffset.x,
-            logicalZ: formationAnchorPosition.logicalZ + formationLocalOffset.z,
-          }
-        : logicalReferenceCoord
+      const basePosition = logicalReferenceCoord
         ? tileCoordToLogicalPosition(logicalReferenceCoord.column, logicalReferenceCoord.row)
         : boardCoord
         ? tileCoordToLogicalPosition(boardCoord.column, boardCoord.row)
@@ -1514,8 +1494,6 @@ const ChessTreadmill = ({ headerHeight }) => {
         anchorBoardCoord,
         formationId: placementOptions.formationId ?? null,
         formationRole: placementOptions.formationRole ?? null,
-        formationAnchorBoardCoord,
-        formationLocalOffset,
         supportTileCoords: resolvedSupportTileCoords,
         uiData,
         sequenceIndex: pieceSequenceCounter,
@@ -1532,33 +1510,12 @@ const ChessTreadmill = ({ headerHeight }) => {
       return meshGroup;
     }
 
-    const queenPawnFormationOffsets = [
-      { key: 'opposite-left', columnOffset: -1, rowOffset: 1, position: [-QUEEN_PAWN_FORMATION_SPACING, 0, QUEEN_PAWN_FORMATION_SPACING] },
-      { key: 'opposite-center', columnOffset: 0, rowOffset: 1, position: [0, 0, QUEEN_PAWN_FORMATION_SPACING] },
-      { key: 'opposite-right', columnOffset: 1, rowOffset: 1, position: [QUEEN_PAWN_FORMATION_SPACING, 0, QUEEN_PAWN_FORMATION_SPACING] },
-    ];
-    const formationAnchorEuler = new THREE.Euler();
-    const formationOffsetVector = new THREE.Vector3();
+    const queenPawnRowOffsets = [-1, 0, 1];
     const pieceAnchorEuler = new THREE.Euler();
     const pieceAnchorOffsetVector = new THREE.Vector3();
 
-    function resolveFormationTransform(anchorBoardCoord, localOffset, pathScroll) {
-      const anchorTransform = getBoardTransformForTileCoord(anchorBoardCoord, pathScroll);
-      formationAnchorEuler.set(anchorTransform.rx, anchorTransform.ry, anchorTransform.rz);
-      formationOffsetVector.copy(localOffset).applyEuler(formationAnchorEuler);
-
-      return {
-        x: anchorTransform.x + formationOffsetVector.x,
-        y: anchorTransform.y + formationOffsetVector.y,
-        z: anchorTransform.z + formationOffsetVector.z,
-        rx: anchorTransform.rx,
-        ry: anchorTransform.ry,
-        rz: anchorTransform.rz,
-      };
-    }
-
-    function createQueenPawnFormationDebugMarkers(formation) {
-      if (!IS_DEVELOPMENT || !QUEEN_PAWN_FORMATION_DEBUG) return [];
+    function createQueenPawnRowDebugMarkers(sequence) {
+      if (!IS_DEVELOPMENT || !QUEEN_PAWN_ROW_DEBUG) return [];
 
       const markerGeometry = new THREE.SphereGeometry(0.16, 16, 10);
       const markerMaterial = new THREE.MeshBasicMaterial({
@@ -1568,59 +1525,51 @@ const ChessTreadmill = ({ headerHeight }) => {
         depthTest: false,
       });
 
-      return formation.expectedLocalOffsets.map(({ key, position }) => {
+      return sequence.pawnBoardCoords.map((coord, index) => {
         const marker = new THREE.Mesh(markerGeometry, markerMaterial);
-        marker.name = `QueenPawnFormation_expected_${key}`;
-        marker.userData.formationLocalOffset = position.clone();
+        marker.name = `QueenPawnRow_expected_${index + 1}`;
+        marker.userData.boardCoord = cloneTileCoord(coord);
         marker.renderOrder = 100;
         scene.add(marker);
         return marker;
       });
     }
 
-    function updateQueenPawnFormationDebugMarkers(pathScroll) {
-      if (!queenPawnFormation?.markerRefs?.length) return;
+    function updateQueenPawnRowDebugMarkers(pathScroll) {
+      if (!queenPawnSequence?.markerRefs?.length) return;
 
-      queenPawnFormation.markerRefs.forEach((marker) => {
-        const transform = resolveFormationTransform(
-          queenPawnFormation.anchorBoardCoord,
-          marker.userData.formationLocalOffset,
-          pathScroll,
-        );
+      queenPawnSequence.markerRefs.forEach((marker) => {
+        const transform = getBoardTransformForTileCoord(marker.userData.boardCoord, pathScroll);
         marker.position.set(transform.x, transform.y + PIECE_BASE_LIFT + 0.1, transform.z);
         marker.rotation.set(transform.rx, transform.ry, transform.rz);
-        marker.visible = queenPawnFormation.queenRef?.visible ?? false;
+        marker.visible = queenPawnSequence.queenRef?.visible ?? false;
       });
     }
 
-    function createQueenPawnFormation({ queenBoardCoord, queenUiData, pawnUiData, supportTileCoords }) {
-      const formationId = 'queen-pawn-ending';
-      const queenLocalOffset = new THREE.Vector3(0, 0, 0);
-      const queenLogicalPosition = tileCoordToLogicalPosition(queenBoardCoord.column, queenBoardCoord.row);
-      const pawnNavigationLogicalX = queenLogicalPosition.logicalX + QUEEN_PAWN_FORMATION_SPACING;
+    function createQueenPawnSequence({ queenBoardCoord, queenUiData, pawnUiData }) {
+      const sequenceId = 'queen-pawn-ending';
+      const pawnColumn = queenBoardCoord.column + QUEEN_PAWN_ROW_COLUMN_OFFSET;
+      const pawnBoardCoords = queenPawnRowOffsets.map((rowOffset) => (
+        makeTileCoord(pawnColumn, queenBoardCoord.row + rowOffset)
+      ));
+      const pawnNavigationLogicalX = tileCoordToLogicalPosition(pawnColumn, queenBoardCoord.row).logicalX;
       const queenPiece = placePiece('queen', queenUiData, {
         boardCoord: queenBoardCoord,
-        formationId,
+        formationId: sequenceId,
         formationRole: 'queen-anchor',
-        formationAnchorBoardCoord: queenBoardCoord,
-        formationLocalOffset: queenLocalOffset.toArray(),
-        lockToAnchorProgress: true,
-        supportTileCoords: supportTileCoords ?? [queenBoardCoord],
+        supportTileCoords: [queenBoardCoord],
       });
-      const pawnPieces = queenPawnFormationOffsets.map(({ key, columnOffset, rowOffset, position }) => placePiece('pawn', pawnUiData, {
-        boardCoord: makeTileCoord(queenBoardCoord.column + columnOffset, queenBoardCoord.row + rowOffset),
-        formationId,
-        formationRole: `pawn-${key}`,
-        formationAnchorBoardCoord: queenBoardCoord,
-        formationLocalOffset: position,
+      const pawnPieces = pawnBoardCoords.map((pawnBoardCoord, index) => placePiece('pawn', pawnUiData, {
+        boardCoord: pawnBoardCoord,
+        formationId: sequenceId,
+        formationRole: `pawn-row-${index + 1}`,
         navigationLogicalX: pawnNavigationLogicalX,
-        lockToAnchorProgress: true,
-        supportTileCoords: [makeTileCoord(queenBoardCoord.column + columnOffset, queenBoardCoord.row + rowOffset)],
+        supportTileCoords: [pawnBoardCoord],
       }));
 
       if (!queenPiece || pawnPieces.some((piece) => !piece)) {
         if (IS_DEVELOPMENT) {
-          console.warn('QueenPawnFormation could not be created because a queen or pawn GLB node was missing.', {
+          console.warn('QueenPawnSequence could not be created because a queen or pawn GLB node was missing.', {
             hasQueen: Boolean(queenPiece),
             pawnCount: pawnPieces.filter(Boolean).length,
           });
@@ -1630,46 +1579,33 @@ const ChessTreadmill = ({ headerHeight }) => {
 
       queenPiece.userData = {
         ...queenPiece.userData,
-        formationExpectedLocalOffset: queenLocalOffset.clone(),
+        expectedBoardCoord: cloneTileCoord(queenBoardCoord),
       };
 
       pawnPieces.forEach((pawnPiece, index) => {
-        const { key, position } = queenPawnFormationOffsets[index];
-        pawnPiece.name = `QueenPawnFormation_pawn_${key}`;
+        pawnPiece.name = `QueenPawnRow_pawn_${index + 1}`;
         pawnPiece.userData = {
           ...pawnPiece.userData,
-          formationExpectedLocalOffset: new THREE.Vector3(...position),
+          expectedBoardCoord: cloneTileCoord(pawnBoardCoords[index]),
         };
       });
 
-      queenPawnFormation = {
-        id: formationId,
-        anchorBoardCoord: cloneTileCoord(queenBoardCoord),
+      queenPawnSequence = {
+        id: sequenceId,
+        queenBoardCoord: cloneTileCoord(queenBoardCoord),
+        pawnColumn,
+        pawnBoardCoords: pawnBoardCoords.map(cloneTileCoord),
         queenRef: queenPiece,
         pawnRefs: pawnPieces,
-        expectedLocalOffsets: queenPawnFormationOffsets.map(({ key, position }) => ({
-          key,
-          position: new THREE.Vector3(...position),
-        })),
-        supportTileCoords: (supportTileCoords ?? buildSquareTileCoords(queenBoardCoord, 1)).map(cloneTileCoord),
         tileSize: CHESS_ROAD_TILE_SIZE,
-        spacing: QUEEN_PAWN_FORMATION_SPACING,
         pieceYOffset: PIECE_BASE_LIFT,
       };
-      queenPawnFormation.markerRefs = createQueenPawnFormationDebugMarkers(queenPawnFormation);
+      queenPawnSequence.markerRefs = createQueenPawnRowDebugMarkers(queenPawnSequence);
 
-      return queenPawnFormation;
+      return queenPawnSequence;
     }
 
     function getPieceTransform(piece, pathScroll) {
-      if (piece.userData.formationAnchorBoardCoord && piece.userData.formationLocalOffset) {
-        return resolveFormationTransform(
-          piece.userData.formationAnchorBoardCoord,
-          piece.userData.formationLocalOffset,
-          pathScroll,
-        );
-      }
-
       const anchorBoardCoord = piece.userData.anchorBoardCoord;
       const boardCoord = piece.userData.boardCoord;
 
@@ -1763,13 +1699,6 @@ const ChessTreadmill = ({ headerHeight }) => {
       });
 
       const queenBoardCoord = makeTileCoord(17, CHESS_ROAD_CENTER_ROW);
-      const queenClusterSupportCoords = [
-        queenBoardCoord,
-        ...queenPawnFormationOffsets.map(({ columnOffset, rowOffset }) => (
-          makeTileCoord(queenBoardCoord.column + columnOffset, queenBoardCoord.row + rowOffset)
-        )),
-      ];
-
       const queenData = buildPieceUiData('queen', {
         whiteHeading: 'ECONOMY',
         redHeading: 'ECONOMY',
@@ -1782,11 +1711,10 @@ const ChessTreadmill = ({ headerHeight }) => {
         comparisonType: 'pawnDifferential',
       });
 
-      createQueenPawnFormation({
+      createQueenPawnSequence({
         queenBoardCoord,
         queenUiData: queenData,
         pawnUiData: pawnData,
-        supportTileCoords: queenClusterSupportCoords,
       });
     }
 
@@ -2097,9 +2025,6 @@ const ChessTreadmill = ({ headerHeight }) => {
     const pieceOffsetEuler = new THREE.Euler();
     const pieceOffsetVector = new THREE.Vector3();
     const targetScaleVector = new THREE.Vector3(1, 1, 1);
-    const queenWorldPosition = new THREE.Vector3();
-    const pawnWorldPosition = new THREE.Vector3();
-
     function getPieceRenderMeshes(piece) {
       if (piece.userData.renderMeshes?.length) return piece.userData.renderMeshes;
       const meshes = [];
@@ -2158,21 +2083,22 @@ const ChessTreadmill = ({ headerHeight }) => {
       });
     }
 
-    function validateQueenPawnFormation(pathScroll) {
-      if (!IS_DEVELOPMENT || !queenPawnFormation) return;
+    function validateQueenPawnRow(pathScroll) {
+      if (!IS_DEVELOPMENT || !queenPawnSequence) return;
 
       const now = performance.now();
-      if (now - lastQueenPawnFormationValidation < QUEEN_PAWN_FORMATION_VALIDATION_INTERVAL_MS) return;
-      lastQueenPawnFormationValidation = now;
+      if (now - lastQueenPawnRowValidation < QUEEN_PAWN_ROW_VALIDATION_INTERVAL_MS) return;
+      lastQueenPawnRowValidation = now;
 
-      const formation = queenPawnFormation;
+      const sequence = queenPawnSequence;
       const {
         queenRef,
         pawnRefs = [],
-        expectedLocalOffsets = [],
-        spacing,
+        queenBoardCoord,
+        pawnBoardCoords = [],
+        pawnColumn,
         pieceYOffset,
-      } = formation;
+      } = sequence;
       const failures = [];
       const allRefs = [queenRef, ...pawnRefs].filter(Boolean);
       const uniqueRefs = new Set(allRefs);
@@ -2189,73 +2115,47 @@ const ChessTreadmill = ({ headerHeight }) => {
       if (pawnRefs.some((pawn) => pawn && (pawn.parent === queenRef || queenRef?.children.includes(pawn)))) {
         failures.push('pawn-is-merged-under-queen');
       }
+      if (pawnBoardCoords.length !== 3) failures.push('missing-pawn-board-coords');
+      if (queenBoardCoord && pawnColumn <= queenBoardCoord.column) failures.push('pawn-row-is-not-after-queen');
 
-      scene.updateMatrixWorld(true);
+      const expectedRows = queenPawnRowOffsets
+        .map((rowOffset) => queenBoardCoord.row + rowOffset)
+        .sort((a, b) => a - b);
+      const actualRows = pawnBoardCoords
+        .map((coord) => coord.row)
+        .sort((a, b) => a - b);
 
-      const inverseQueenRotation = new THREE.Quaternion();
-      const localOffset = new THREE.Vector3();
-      if (queenRef) {
-        queenRef.getWorldPosition(queenWorldPosition);
-        inverseQueenRotation.setFromEuler(queenRef.rotation).invert();
+      if (actualRows.length !== expectedRows.length || actualRows.some((row, index) => row !== expectedRows[index])) {
+        failures.push('pawn-row-uses-unexpected-rows');
+      }
+      if (pawnBoardCoords.some((coord) => coord.column !== pawnColumn)) {
+        failures.push('pawn-row-column-is-not-aligned');
+      }
+      if (pawnRefs.some((pawn, index) => {
+        const expectedCoord = pawnBoardCoords[index];
+        return !expectedCoord
+          || pawn.userData.boardCoord?.column !== expectedCoord.column
+          || pawn.userData.boardCoord?.row !== expectedCoord.row;
+      })) {
+        failures.push('pawn-piece-board-coord-mismatch');
       }
 
-      const pawnPositions = [];
-      const localOffsets = [];
-      const rowOffsets = [];
-
-      pawnRefs.forEach((pawn, index) => {
-        if (!pawn) return;
-        const expected = expectedLocalOffsets[index]?.position;
-        pawn.getWorldPosition(pawnWorldPosition);
-        const pawnWorld = pawnWorldPosition.clone();
-        localOffset.copy(pawnWorldPosition).sub(queenWorldPosition).applyQuaternion(inverseQueenRotation);
-        const planarDistance = Math.hypot(localOffset.x, localOffset.z);
-        const expectedPlanarDistance = expected ? Math.hypot(expected.x, expected.z) : 0;
-
-        pawnPositions.push(formatVectorForDebug(pawnWorld));
-        localOffsets.push(formatVectorForDebug(localOffset));
-        rowOffsets.push(localOffset.clone());
-
-        if (!expected || localOffset.distanceTo(expected) > 0.1) {
-          failures.push(`pawn-${index}-local-offset-mismatch`);
-        }
-        if (expected && Math.abs(planarDistance - expectedPlanarDistance) > 0.1) {
-          failures.push(`pawn-${index}-distance-mismatch`);
-        }
-        if (planarDistance < CHESS_ROAD_TILE_SIZE * 1.08) {
-          failures.push(`pawn-${index}-spacing-too-tight`);
-        }
-        if (localOffset.z < CHESS_ROAD_TILE_SIZE * 1.08) {
-          failures.push(`pawn-${index}-is-not-on-opposite-side-of-queen`);
-        }
-        if (Math.abs(localOffset.y) > 0.04) {
-          failures.push(`pawn-${index}-y-offset-mismatch`);
-        }
-      });
-
-      if (rowOffsets.length === 3) {
-        const sortedOffsets = [...rowOffsets].sort((a, b) => a.x - b.x);
-        const rowZ = rowOffsets[0].z;
-        if (rowOffsets.some((offset) => Math.abs(offset.z - rowZ) > 0.1)) {
-          failures.push('pawn-row-is-not-aligned');
-        }
-        if (
-          Math.abs(sortedOffsets[0].x + spacing) > 0.1
-          || Math.abs(sortedOffsets[1].x) > 0.1
-          || Math.abs(sortedOffsets[2].x - spacing) > 0.1
-        ) {
-          failures.push('pawn-row-x-spacing-mismatch');
-        }
+      const queenLogicalX = queenBoardCoord
+        ? tileCoordToLogicalPosition(queenBoardCoord.column, queenBoardCoord.row).logicalX
+        : 0;
+      if (pawnRefs.some((pawn) => (pawn?.userData.logicalX ?? 0) <= queenLogicalX)) {
+        failures.push('pawn-logical-x-is-not-after-queen');
+      }
+      if (pawnRefs.some((pawn) => (pawn?.userData.navigationLogicalX ?? 0) <= queenLogicalX)) {
+        failures.push('pawn-navigation-x-is-not-after-queen');
       }
 
       if (failures.length > 0) {
-        console.warn('QueenPawnFormation validation failed.', {
+        console.warn('QueenPawnRow validation failed.', {
           failures,
-          queenPosition: queenRef ? formatVectorForDebug(queenWorldPosition) : null,
-          pawnPositions,
-          localOffsets,
+          queenBoardCoord,
+          pawnBoardCoords,
           tileSize: CHESS_ROAD_TILE_SIZE,
-          spacing,
           pieceYOffset,
           pieceTransforms: allRefs.map((piece) => ({
             name: piece.name,
@@ -2549,9 +2449,9 @@ const ChessTreadmill = ({ headerHeight }) => {
       keyShadowLight.target.updateMatrixWorld();
       rimLight.target.updateMatrixWorld();
 
-      if (IS_DEVELOPMENT) updateQueenPawnFormationDebugMarkers(pathScroll);
+      if (IS_DEVELOPMENT) updateQueenPawnRowDebugMarkers(pathScroll);
       renderer.render(scene, camera);
-      if (IS_DEVELOPMENT) validateQueenPawnFormation(pathScroll);
+      if (IS_DEVELOPMENT) validateQueenPawnRow(pathScroll);
       frameId = requestAnimationFrame(animate);
     };
     if (isVisible) startAnimation();
@@ -2697,7 +2597,7 @@ const ChessTreadmill = ({ headerHeight }) => {
               </h3>
             ) : null}
             {showPawnDifferentialComparison ? (
-              <PawnDifferentialComparison />
+              <PawnDifferentialComparison isRiskTheme={isRiskTheme} />
             ) : activePieceSub ? (
               <p className="mt-3 whitespace-pre-line text-[0.92rem] font-medium leading-[1.65] tracking-[0.03em] text-white/78 sm:text-[1rem] md:mt-4 md:text-[1.1rem]">
                 {activePieceSub}
@@ -2884,7 +2784,7 @@ export default function App() {
           style={{ minHeight: heroHeight, contain: 'paint' }}
         >
           <img
-            src={leagueSpartanBg}
+            src={heroImage}
             alt=""
             aria-hidden="true"
             decoding="async"
