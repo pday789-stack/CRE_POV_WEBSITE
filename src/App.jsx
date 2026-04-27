@@ -3,9 +3,11 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
-import logoSvg from '../CRE POV WEBSITE ASSETS/LOGO.svg';
+import logoSvg from '../4.27 UPLOAD/NEW LOGO.svg';
 import leagueSpartanBg from '../CRE POV WEBSITE ASSETS/League Spartan.png';
 import sunglassesCursorPng from '../CRE POV WEBSITE ASSETS/sunglasses-cursor.png';
+import comparisonWhitePawnPng from '../4.27 UPLOAD/WHITE PAWN.png';
+import comparisonRedPawnPng from '../4.27 UPLOAD/RED PAWN.png';
 import whiteChessPiecesGlb from '../CRE POV WEBSITE ASSETS/White_Chess_Pieces.glb';
 import redChessPiecesGlb from '../CRE POV WEBSITE ASSETS/Red_Chess_Pieces.glb';
 import puwWhiteKing from '../CRE POV WEBSITE ASSETS/PUW_WHITE_KING.svg';
@@ -646,35 +648,47 @@ const AnimatedTabHint = () => (
   </div>
 );
 
+const HeaderLogo = () => (
+  <span className="relative block h-[30px] w-[100px] overflow-hidden md:h-[32px] md:w-[107px]">
+    <img
+      src={logoSvg}
+      alt="CRE POV"
+      className="absolute left-0 top-0 h-[333.333%] w-auto max-w-none select-none"
+      style={{ transform: 'translateY(-64.1716%)' }}
+      draggable="false"
+    />
+  </span>
+);
+
 const PawnComparisonIcon = ({ src, label }) => (
   <img
     src={src}
     alt={label}
-    className="h-9 w-9 object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.32)] sm:h-10 sm:w-10 md:h-11 md:w-11"
+    className="h-12 w-12 rounded-[6px] object-contain shadow-[0_12px_26px_rgba(0,0,0,0.24)] ring-1 ring-white/12 sm:h-14 sm:w-14 md:h-16 md:w-16"
     draggable="false"
   />
 );
 
 const PawnDifferentialComparison = () => (
-  <div className="mt-4 grid gap-3 text-white/88 sm:mt-5">
-    <div className="flex items-center gap-4">
-      <span className="w-16 text-[0.78rem] font-bold uppercase tracking-[0.22em] text-white/72 sm:w-20 md:text-[0.86rem]">
-        WHITE:
-      </span>
+  <div className="mt-4 grid gap-4 text-white/88 sm:mt-5 md:gap-5">
+    <div className="grid gap-2.5">
+      <p className="text-[0.82rem] font-bold tracking-[0.18em] text-white/82 sm:text-[0.9rem] md:text-[1rem]">
+        WHITE: Less sale pressure
+      </p>
       <div className="flex items-center gap-3 text-2xl font-bold text-white sm:text-3xl">
-        <PawnComparisonIcon src={puwWhitePawn} label="White pawn" />
+        <PawnComparisonIcon src={comparisonWhitePawnPng} label="White pawn" />
         <span aria-hidden="true">&gt;</span>
-        <PawnComparisonIcon src={puwRedPawn} label="Red pawn" />
+        <PawnComparisonIcon src={comparisonRedPawnPng} label="Red pawn" />
       </div>
     </div>
-    <div className="flex items-center gap-4">
-      <span className="w-16 text-[0.78rem] font-bold uppercase tracking-[0.22em] text-white/72 sm:w-20 md:text-[0.86rem]">
-        RED:
-      </span>
+    <div className="grid gap-2.5">
+      <p className="text-[0.82rem] font-bold tracking-[0.18em] text-white/82 sm:text-[0.9rem] md:text-[1rem]">
+        RED: More sale pressure
+      </p>
       <div className="flex items-center gap-3 text-2xl font-bold text-white sm:text-3xl">
-        <PawnComparisonIcon src={puwWhitePawn} label="White pawn" />
+        <PawnComparisonIcon src={comparisonWhitePawnPng} label="White pawn" />
         <span aria-hidden="true">&lt;</span>
-        <PawnComparisonIcon src={puwRedPawn} label="Red pawn" />
+        <PawnComparisonIcon src={comparisonRedPawnPng} label="Red pawn" />
       </div>
     </div>
   </div>
@@ -1519,9 +1533,9 @@ const ChessTreadmill = ({ headerHeight }) => {
     }
 
     const queenPawnFormationOffsets = [
-      { key: 'front-left', columnOffset: -1, rowOffset: -1, position: [-QUEEN_PAWN_FORMATION_SPACING, 0, -QUEEN_PAWN_FORMATION_SPACING] },
-      { key: 'front-center', columnOffset: 0, rowOffset: -1, position: [0, 0, -QUEEN_PAWN_FORMATION_SPACING] },
-      { key: 'front-right', columnOffset: 1, rowOffset: -1, position: [QUEEN_PAWN_FORMATION_SPACING, 0, -QUEEN_PAWN_FORMATION_SPACING] },
+      { key: 'opposite-left', columnOffset: -1, rowOffset: 1, position: [-QUEEN_PAWN_FORMATION_SPACING, 0, QUEEN_PAWN_FORMATION_SPACING] },
+      { key: 'opposite-center', columnOffset: 0, rowOffset: 1, position: [0, 0, QUEEN_PAWN_FORMATION_SPACING] },
+      { key: 'opposite-right', columnOffset: 1, rowOffset: 1, position: [QUEEN_PAWN_FORMATION_SPACING, 0, QUEEN_PAWN_FORMATION_SPACING] },
     ];
     const formationAnchorEuler = new THREE.Euler();
     const formationOffsetVector = new THREE.Vector3();
@@ -2211,8 +2225,8 @@ const ChessTreadmill = ({ headerHeight }) => {
         if (planarDistance < CHESS_ROAD_TILE_SIZE * 1.08) {
           failures.push(`pawn-${index}-spacing-too-tight`);
         }
-        if (localOffset.z > -CHESS_ROAD_TILE_SIZE * 1.08) {
-          failures.push(`pawn-${index}-is-not-in-front-of-queen`);
+        if (localOffset.z < CHESS_ROAD_TILE_SIZE * 1.08) {
+          failures.push(`pawn-${index}-is-not-on-opposite-side-of-queen`);
         }
         if (Math.abs(localOffset.y) > 0.04) {
           failures.push(`pawn-${index}-y-offset-mismatch`);
@@ -2612,8 +2626,10 @@ const ChessTreadmill = ({ headerHeight }) => {
 
   const activePieceHeading = isRiskTheme ? pieceInfo.redHeading : pieceInfo.whiteHeading;
   const activePieceSub = isRiskTheme ? pieceInfo.redSub : pieceInfo.whiteSub;
-  const activePieceImage = isRiskTheme ? pieceInfo.redImageSrc : pieceInfo.whiteImageSrc;
   const showPawnDifferentialComparison = pieceInfo.comparisonType === 'pawnDifferential';
+  const activePieceImage = showPawnDifferentialComparison
+    ? ''
+    : (isRiskTheme ? pieceInfo.redImageSrc : pieceInfo.whiteImageSrc);
   const showPieceDetail = pieceInfo.active && Boolean(
     activePieceImage
     || activePieceHeading
@@ -2832,7 +2848,7 @@ export default function App() {
         className="sticky top-0 z-50 flex flex-wrap items-center justify-between gap-x-5 gap-y-2 border-b border-white/14 bg-[#151922]/94 px-4 py-2 md:px-7 md:py-2.5 shadow-[0_14px_34px_rgba(0,0,0,0.22)]"
       >
         <div className="flex items-center text-white shrink-0">
-          <img src={logoSvg} alt="CRE POV" className="h-[52px] w-auto max-w-none md:h-[54px]" />
+          <HeaderLogo />
         </div>
         <nav
           ref={navMenusRef}
