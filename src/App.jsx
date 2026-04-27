@@ -552,6 +552,7 @@ const createEmptyPieceInfo = () => ({
   redSub: '',
   whiteImageSrc: '',
   redImageSrc: '',
+  comparisonType: '',
   active: false,
 });
 
@@ -641,6 +642,40 @@ const AnimatedTabHint = () => (
   <div className="animated-tab" aria-hidden="true">
     <div className="animated-tab__base">
       <div className="animated-tab__key">Tab</div>
+    </div>
+  </div>
+);
+
+const PawnComparisonIcon = ({ src, label }) => (
+  <img
+    src={src}
+    alt={label}
+    className="h-9 w-9 object-contain drop-shadow-[0_10px_20px_rgba(0,0,0,0.32)] sm:h-10 sm:w-10 md:h-11 md:w-11"
+    draggable="false"
+  />
+);
+
+const PawnDifferentialComparison = () => (
+  <div className="mt-4 grid gap-3 text-white/88 sm:mt-5">
+    <div className="flex items-center gap-4">
+      <span className="w-16 text-[0.78rem] font-bold uppercase tracking-[0.22em] text-white/72 sm:w-20 md:text-[0.86rem]">
+        WHITE:
+      </span>
+      <div className="flex items-center gap-3 text-2xl font-bold text-white sm:text-3xl">
+        <PawnComparisonIcon src={puwWhitePawn} label="White pawn" />
+        <span aria-hidden="true">&gt;</span>
+        <PawnComparisonIcon src={puwRedPawn} label="Red pawn" />
+      </div>
+    </div>
+    <div className="flex items-center gap-4">
+      <span className="w-16 text-[0.78rem] font-bold uppercase tracking-[0.22em] text-white/72 sm:w-20 md:text-[0.86rem]">
+        RED:
+      </span>
+      <div className="flex items-center gap-3 text-2xl font-bold text-white sm:text-3xl">
+        <PawnComparisonIcon src={puwWhitePawn} label="White pawn" />
+        <span aria-hidden="true">&lt;</span>
+        <PawnComparisonIcon src={puwRedPawn} label="Red pawn" />
+      </div>
     </div>
   </div>
 );
@@ -819,7 +854,7 @@ const OctahedronScene = () => {
       canvas.height = 512;
       const ctx = canvas.getContext('2d');
 
-      ctx.fillStyle = '#1A1A1D';
+      ctx.fillStyle = '#000000';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
 
@@ -1485,9 +1520,8 @@ const ChessTreadmill = ({ headerHeight }) => {
 
     const queenPawnFormationOffsets = [
       { key: 'front-left', columnOffset: -1, rowOffset: -1, position: [-QUEEN_PAWN_FORMATION_SPACING, 0, -QUEEN_PAWN_FORMATION_SPACING] },
+      { key: 'front-center', columnOffset: 0, rowOffset: -1, position: [0, 0, -QUEEN_PAWN_FORMATION_SPACING] },
       { key: 'front-right', columnOffset: 1, rowOffset: -1, position: [QUEEN_PAWN_FORMATION_SPACING, 0, -QUEEN_PAWN_FORMATION_SPACING] },
-      { key: 'back-left', columnOffset: -1, rowOffset: 1, position: [-QUEEN_PAWN_FORMATION_SPACING, 0, QUEEN_PAWN_FORMATION_SPACING] },
-      { key: 'back-right', columnOffset: 1, rowOffset: 1, position: [QUEEN_PAWN_FORMATION_SPACING, 0, QUEEN_PAWN_FORMATION_SPACING] },
     ];
     const formationAnchorEuler = new THREE.Euler();
     const formationOffsetVector = new THREE.Vector3();
@@ -1715,7 +1749,12 @@ const ChessTreadmill = ({ headerHeight }) => {
       });
 
       const queenBoardCoord = makeTileCoord(17, CHESS_ROAD_CENTER_ROW);
-      const queenClusterSupportCoords = buildSquareTileCoords(queenBoardCoord, 1);
+      const queenClusterSupportCoords = [
+        queenBoardCoord,
+        ...queenPawnFormationOffsets.map(({ columnOffset, rowOffset }) => (
+          makeTileCoord(queenBoardCoord.column + columnOffset, queenBoardCoord.row + rowOffset)
+        )),
+      ];
 
       const queenData = buildPieceUiData('queen', {
         whiteHeading: 'ECONOMY',
@@ -1726,8 +1765,7 @@ const ChessTreadmill = ({ headerHeight }) => {
       const pawnData = buildPieceUiData('pawn', {
         whiteHeading: 'TIMING',
         redHeading: 'TIMING',
-        whiteSub: '[via pawn differential]\nLess pressure to sell',
-        redSub: '[via pawn differential]\nMore pressure to sell',
+        comparisonType: 'pawnDifferential',
       });
 
       createQueenPawnFormation({
@@ -1747,7 +1785,13 @@ const ChessTreadmill = ({ headerHeight }) => {
         piece.userData.targetThemeMix = isRisk ? 1 : 0;
       });
 
-      updateMilestoneText(Math.min(scrollPos, MAX_PATH_SCROLL));
+      updateMilestoneText(getMilestonePathScroll(scrollPos));
+    }
+
+    function getMilestonePathScroll(pathScroll) {
+      const safePathScroll = Math.max(0, pathScroll);
+      if (!loopScrollUnlocked) return Math.min(safePathScroll, MAX_PATH_SCROLL);
+      return getLoopRelativePathScroll(safePathScroll);
     }
 
     function updateMilestoneText(currentPathScroll) {
@@ -1857,18 +1901,40 @@ const ChessTreadmill = ({ headerHeight }) => {
       return sequence.findIndex((candidate) => candidate.userData.uiData?.whiteHeading === heading);
     }
 
+    function getPieceNavigationLogicalX(piece) {
+      return piece.userData.navigationLogicalX ?? piece.userData.logicalX ?? 0;
+    }
+
+    function getLoopRelativePathScroll(pathScroll) {
+      if (pathScroll < TREADMILL_LOOP_LENGTH) return pathScroll;
+      return positiveModulo(pathScroll, TREADMILL_LOOP_LENGTH);
+    }
+
+    function getForwardSequenceIndexFromScroll(sequence) {
+      const baseline = getLoopRelativePathScroll(Math.max(scrollPos, targetScrollPos));
+      const nextPieceEntry = sequence
+        .map((piece, index) => ({
+          index,
+          navigationX: positiveModulo(getPieceNavigationLogicalX(piece), TREADMILL_LOOP_LENGTH),
+        }))
+        .find(({ navigationX }) => navigationX >= baseline - 0.35);
+
+      return nextPieceEntry?.index ?? 0;
+    }
+
     function getFocusedPathScrollForPiece(piece) {
-      const pieceLogicalX = piece.userData.navigationLogicalX ?? piece.userData.logicalX ?? 0;
+      const pieceLogicalX = getPieceNavigationLogicalX(piece);
       const forwardBaseline = Math.max(scrollPos, targetScrollPos);
 
       if (!loopScrollUnlocked && pieceLogicalX >= forwardBaseline - 0.35) {
-        return Math.max(0, Math.min(MAX_PATH_SCROLL, pieceLogicalX));
+        return Math.max(forwardBaseline, Math.max(0, Math.min(MAX_PATH_SCROLL, pieceLogicalX)));
       }
 
       let targetPathScroll = pieceLogicalX;
-      while (targetPathScroll <= forwardBaseline + 0.35) {
+      while (targetPathScroll < forwardBaseline - 0.35) {
         targetPathScroll += TREADMILL_LOOP_LENGTH;
       }
+      targetPathScroll = Math.max(targetPathScroll, forwardBaseline);
       return Math.max(TREADMILL_LOOP_ENTRY_SCROLL, targetPathScroll);
     }
 
@@ -1876,16 +1942,19 @@ const ChessTreadmill = ({ headerHeight }) => {
       const sortedPieces = getFullPieceSequence();
       if (sortedPieces.length === 0) return;
 
+      let nextIndex;
       if (syncFromCurrent || selectedSequenceIndex === -1) {
         const currentSequenceIndex = getSequenceIndexForPiece(sortedPieces, currentHoveredUUID);
         if (currentSequenceIndex !== -1) {
           selectedSequenceIndex = currentSequenceIndex;
+          nextIndex = (selectedSequenceIndex + 1) % sortedPieces.length;
+        } else {
+          nextIndex = getForwardSequenceIndexFromScroll(sortedPieces);
         }
+      } else {
+        nextIndex = (selectedSequenceIndex + 1) % sortedPieces.length;
       }
 
-      const nextIndex = selectedSequenceIndex === -1
-        ? 0
-        : (selectedSequenceIndex + 1) % sortedPieces.length;
       selectedSequenceIndex = nextIndex;
 
       const nextPiece = sortedPieces[nextIndex];
@@ -2091,12 +2160,11 @@ const ChessTreadmill = ({ headerHeight }) => {
         pieceYOffset,
       } = formation;
       const failures = [];
-      const expectedDistance = Math.sqrt(2) * spacing;
       const allRefs = [queenRef, ...pawnRefs].filter(Boolean);
       const uniqueRefs = new Set(allRefs);
 
       if (!queenRef) failures.push('missing-queen-ref');
-      if (pawnRefs.length !== 4 || pawnRefs.some((pawn) => !pawn)) failures.push('missing-pawn-ref');
+      if (pawnRefs.length !== 3 || pawnRefs.some((pawn) => !pawn)) failures.push('missing-pawn-ref');
       if (uniqueRefs.size !== allRefs.length) failures.push('formation-pieces-are-not-unique-objects');
       if (queenRef && !interactivePieces.includes(queenRef)) failures.push('queen-is-not-independently-interactive');
       if (pawnRefs.some((pawn) => pawn && !interactivePieces.includes(pawn))) {
@@ -2119,7 +2187,7 @@ const ChessTreadmill = ({ headerHeight }) => {
 
       const pawnPositions = [];
       const localOffsets = [];
-      const offsetSum = new THREE.Vector3();
+      const rowOffsets = [];
 
       pawnRefs.forEach((pawn, index) => {
         if (!pawn) return;
@@ -2128,27 +2196,42 @@ const ChessTreadmill = ({ headerHeight }) => {
         const pawnWorld = pawnWorldPosition.clone();
         localOffset.copy(pawnWorldPosition).sub(queenWorldPosition).applyQuaternion(inverseQueenRotation);
         const planarDistance = Math.hypot(localOffset.x, localOffset.z);
+        const expectedPlanarDistance = expected ? Math.hypot(expected.x, expected.z) : 0;
 
         pawnPositions.push(formatVectorForDebug(pawnWorld));
         localOffsets.push(formatVectorForDebug(localOffset));
-        offsetSum.add(localOffset);
+        rowOffsets.push(localOffset.clone());
 
         if (!expected || localOffset.distanceTo(expected) > 0.1) {
           failures.push(`pawn-${index}-local-offset-mismatch`);
         }
-        if (Math.abs(planarDistance - expectedDistance) > 0.1) {
+        if (expected && Math.abs(planarDistance - expectedPlanarDistance) > 0.1) {
           failures.push(`pawn-${index}-distance-mismatch`);
         }
         if (planarDistance < CHESS_ROAD_TILE_SIZE * 1.08) {
           failures.push(`pawn-${index}-spacing-too-tight`);
+        }
+        if (localOffset.z > -CHESS_ROAD_TILE_SIZE * 1.08) {
+          failures.push(`pawn-${index}-is-not-in-front-of-queen`);
         }
         if (Math.abs(localOffset.y) > 0.04) {
           failures.push(`pawn-${index}-y-offset-mismatch`);
         }
       });
 
-      if (Math.abs(offsetSum.x) > 0.08 || Math.abs(offsetSum.z) > 0.08) {
-        failures.push('pawn-box-is-not-symmetric-around-queen');
+      if (rowOffsets.length === 3) {
+        const sortedOffsets = [...rowOffsets].sort((a, b) => a.x - b.x);
+        const rowZ = rowOffsets[0].z;
+        if (rowOffsets.some((offset) => Math.abs(offset.z - rowZ) > 0.1)) {
+          failures.push('pawn-row-is-not-aligned');
+        }
+        if (
+          Math.abs(sortedOffsets[0].x + spacing) > 0.1
+          || Math.abs(sortedOffsets[1].x) > 0.1
+          || Math.abs(sortedOffsets[2].x - spacing) > 0.1
+        ) {
+          failures.push('pawn-row-x-spacing-mismatch');
+        }
       }
 
       if (failures.length > 0) {
@@ -2159,7 +2242,6 @@ const ChessTreadmill = ({ headerHeight }) => {
           localOffsets,
           tileSize: CHESS_ROAD_TILE_SIZE,
           spacing,
-          expectedDistance: Number(expectedDistance.toFixed(3)),
           pieceYOffset,
           pieceTransforms: allRefs.map((piece) => ({
             name: piece.name,
@@ -2207,7 +2289,7 @@ const ChessTreadmill = ({ headerHeight }) => {
         : null;
       const selectedGlowHeading = selectedPieceForGlow?.userData.uiData?.whiteHeading ?? null;
 
-      updateMilestoneText(pathScroll);
+      updateMilestoneText(getMilestonePathScroll(pathScroll));
 
       if (
         interactionMode === 'hover'
@@ -2531,7 +2613,13 @@ const ChessTreadmill = ({ headerHeight }) => {
   const activePieceHeading = isRiskTheme ? pieceInfo.redHeading : pieceInfo.whiteHeading;
   const activePieceSub = isRiskTheme ? pieceInfo.redSub : pieceInfo.whiteSub;
   const activePieceImage = isRiskTheme ? pieceInfo.redImageSrc : pieceInfo.whiteImageSrc;
-  const showPieceDetail = pieceInfo.active && Boolean(activePieceImage || activePieceHeading || activePieceSub);
+  const showPawnDifferentialComparison = pieceInfo.comparisonType === 'pawnDifferential';
+  const showPieceDetail = pieceInfo.active && Boolean(
+    activePieceImage
+    || activePieceHeading
+    || activePieceSub
+    || showPawnDifferentialComparison
+  );
   const showHints = !showPieceDetail;
   const showPieceToggleHint = !showPieceDetail;
 
@@ -2592,7 +2680,9 @@ const ChessTreadmill = ({ headerHeight }) => {
                 {activePieceHeading}
               </h3>
             ) : null}
-            {activePieceSub ? (
+            {showPawnDifferentialComparison ? (
+              <PawnDifferentialComparison />
+            ) : activePieceSub ? (
               <p className="mt-3 whitespace-pre-line text-[0.92rem] font-medium leading-[1.65] tracking-[0.03em] text-white/78 sm:text-[1rem] md:mt-4 md:text-[1.1rem]">
                 {activePieceSub}
               </p>
