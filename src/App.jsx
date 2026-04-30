@@ -63,8 +63,8 @@ const PIECE_MATERIAL_PROFILES = {
     fillColor: '#CFE7FF',
     rimColor: '#FFFFFF',
     lineColor: '#F4FAFF',
-    coreOpacity: 0.78,
-    rimOpacity: 0.7,
+    coreOpacity: 0.86,
+    rimOpacity: 0.5,
     lineOpacity: 0.18,
     rimStrength: 1.74,
     lineStrength: 0.52,
@@ -77,8 +77,8 @@ const PIECE_MATERIAL_PROFILES = {
     fillColor: '#C82742',
     rimColor: '#FF7C8A',
     lineColor: '#FF5268',
-    coreOpacity: 0.76,
-    rimOpacity: 0.72,
+    coreOpacity: 0.83,
+    rimOpacity: 0.52,
     lineOpacity: 0.2,
     rimStrength: 1.78,
     lineStrength: 0.56,
@@ -211,13 +211,13 @@ const HOLOGRAPHIC_CORE_FRAGMENT_SHADER = `
     finalColor += uRimColor * fresnel * uRimStrength * 0.34;
     finalColor += uLineColor * lineMask * uLineStrength * (0.28 + rim * 0.14 + surfaceSheen * 0.08);
 
-    float alpha = uOpacity * (0.68 + surface * 0.24);
+    float alpha = uOpacity * (0.74 + surface * 0.22);
     alpha += innerBody * uOpacity * 0.08;
     alpha += rim * uOpacity * uRimStrength * 0.34;
     alpha += lineMask * uOpacity * uLineStrength * 0.035;
 
     if (alpha < 0.01) discard;
-    gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 0.94));
+    gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 0.98));
   }
 `;
 
@@ -356,7 +356,7 @@ const createHolographicRimMaterial = (initialMix = 0) => {
     depthWrite: false,
     depthTest: true,
     blending: THREE.AdditiveBlending,
-    side: THREE.FrontSide,
+    side: THREE.BackSide,
     toneMapped: false,
   });
   attachHologramProfiles(material, 'rim');
@@ -1170,6 +1170,85 @@ const ChessTreadmill = ({ headerHeight }) => {
     selectedSurfaceGlow.renderOrder = 2;
     selectedSurfaceGlow.visible = false;
     scene.add(selectedSurfaceGlow);
+
+    const selectedHeaderCanvas = document.createElement('canvas');
+    selectedHeaderCanvas.width = 1024;
+    selectedHeaderCanvas.height = 192;
+    const selectedHeaderContext = selectedHeaderCanvas.getContext('2d');
+    const selectedHeaderTexture = new THREE.CanvasTexture(selectedHeaderCanvas);
+    selectedHeaderTexture.colorSpace = THREE.SRGBColorSpace;
+    selectedHeaderTexture.anisotropy = 4;
+    const selectedHeaderGeometry = new THREE.PlaneGeometry(
+      CHESS_ROAD_TILE_SIZE * 4.35,
+      CHESS_ROAD_TILE_SIZE * 0.72,
+      1,
+      1,
+    );
+    selectedHeaderGeometry.rotateX(-Math.PI / 2);
+    const selectedHeaderMaterial = new THREE.MeshBasicMaterial({
+      map: selectedHeaderTexture,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.NormalBlending,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    });
+    const selectedHeader = new THREE.Mesh(selectedHeaderGeometry, selectedHeaderMaterial);
+    selectedHeader.name = 'selected_piece_scene_header';
+    selectedHeader.renderOrder = 5;
+    selectedHeader.visible = false;
+    scene.add(selectedHeader);
+    const selectedHeaderEuler = new THREE.Euler();
+    const selectedHeaderLift = new THREE.Vector3();
+    const selectedHeaderOffset = new THREE.Vector3();
+    let selectedHeaderLabel = '';
+    let selectedHeaderThemeKey = '';
+
+    function drawSelectedHeaderTexture(label, themeMix) {
+      if (!selectedHeaderContext || !label) return;
+
+      const nextLabel = label.toUpperCase();
+      const nextThemeKey = themeMix > 0.5 ? 'risk' : 'owner';
+      if (selectedHeaderLabel === nextLabel && selectedHeaderThemeKey === nextThemeKey) return;
+
+      selectedHeaderLabel = nextLabel;
+      selectedHeaderThemeKey = nextThemeKey;
+
+      const ctx = selectedHeaderContext;
+      const accent = nextThemeKey === 'risk' ? '#FF5268' : '#F3F2EE';
+      const glow = nextThemeKey === 'risk' ? 'rgba(255,82,104,0.46)' : 'rgba(207,231,255,0.46)';
+      ctx.clearRect(0, 0, selectedHeaderCanvas.width, selectedHeaderCanvas.height);
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(7, 8, 12, 0.56)';
+      ctx.strokeStyle = nextThemeKey === 'risk' ? 'rgba(255,82,104,0.42)' : 'rgba(243,242,238,0.36)';
+      ctx.lineWidth = 4;
+      ctx.fillRect(40, 50, 944, 92);
+      ctx.strokeRect(40, 50, 944, 92);
+
+      ctx.shadowColor = glow;
+      ctx.shadowBlur = 22;
+      ctx.fillStyle = accent;
+      ctx.font = '700 72px "Space Grotesk", Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.letterSpacing = '10px';
+      ctx.fillText(nextLabel, 512, 96, 880);
+
+      ctx.shadowBlur = 14;
+      ctx.strokeStyle = nextThemeKey === 'risk' ? 'rgba(255,124,138,0.58)' : 'rgba(255,255,255,0.48)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(118, 136);
+      ctx.lineTo(906, 136);
+      ctx.stroke();
+      ctx.restore();
+
+      selectedHeaderTexture.needsUpdate = true;
+    }
+
     let lastInteractionCenteringTime = 0;
 
     const loader = new GLTFLoader();
@@ -1427,23 +1506,13 @@ const ChessTreadmill = ({ headerHeight }) => {
 
         const rimShell = new THREE.Mesh(mesh.geometry, createHolographicRimMaterial(initialMix));
         rimShell.name = `${mesh.name || pieceType}_holographic_rim`;
-        rimShell.scale.setScalar(1.03);
+        rimShell.scale.setScalar(1.016);
         rimShell.renderOrder = 3;
         rimShell.castShadow = false;
         rimShell.receiveShadow = false;
         rimShell.raycast = () => {};
         mesh.add(rimShell);
         hologramOverlays.push({ material: rimShell.material, type: 'rim' });
-
-        const lineMesh = new THREE.Mesh(mesh.geometry, createHolographicLineMaterial(initialMix));
-        lineMesh.name = `${mesh.name || pieceType}_holographic_lines`;
-        lineMesh.scale.setScalar(1.006);
-        lineMesh.renderOrder = 4;
-        lineMesh.castShadow = false;
-        lineMesh.receiveShadow = false;
-        lineMesh.raycast = () => {};
-        mesh.add(lineMesh);
-        hologramOverlays.push({ material: lineMesh.material, type: 'line' });
 
         pieceMeshes.push(mesh);
         pieceRoot.add(mesh);
@@ -1726,7 +1795,7 @@ const ChessTreadmill = ({ headerHeight }) => {
         whiteHeading: 'ECONOMY',
         redHeading: 'ECONOMY',
         whiteSub: 'STRONG MARKET',
-        redSub: '[HARSH MARKET]',
+        redSub: 'Tough Market',
       });
       const pawnData = buildPieceUiData('pawn', {
         whiteHeading: 'TIMING',
@@ -2298,7 +2367,7 @@ const ChessTreadmill = ({ headerHeight }) => {
               );
               if (!isSelectedGlow) return;
 
-              const contribution = falloff * reveal * 1.02;
+              const contribution = falloff * reveal * 1.34;
               surfaceGlowStrength += contribution;
               surfaceGlowPieceColor.copy(ownerSurfaceGlowColor).lerp(riskSurfaceGlowColor, piece.userData.themeMix ?? (currentMode === 'risk' ? 1 : 0));
               surfaceGlowPieceColor.multiplyScalar(contribution);
@@ -2313,17 +2382,17 @@ const ChessTreadmill = ({ headerHeight }) => {
             tile.material.emissive.copy(tile.userData.emissiveColor);
             if (surfaceGlowStrength > 0.001) {
               surfaceGlowAccumulator.multiplyScalar(1 / surfaceGlowStrength);
-              const surfaceGlowMix = clamp01(surfaceGlowStrength * 0.68);
+              const surfaceGlowMix = clamp01(surfaceGlowStrength * 0.84);
               tile.material.emissive.lerp(surfaceGlowAccumulator, surfaceGlowMix);
               if (tile.material.specularColor) {
-                tile.material.specularColor.copy(tile.userData.baseSpecularColor).lerp(surfaceGlowAccumulator, surfaceGlowMix * 0.56);
+                tile.material.specularColor.copy(tile.userData.baseSpecularColor).lerp(surfaceGlowAccumulator, surfaceGlowMix * 0.72);
               }
             } else if (tile.material.specularColor) {
               tile.material.specularColor.copy(tile.userData.baseSpecularColor);
             }
             tile.material.emissiveIntensity = 0.003
               + centerFocus * (tile.userData.isDark ? 0.014 : 0.01)
-              + clamp01(surfaceGlowStrength) * (tile.userData.isDark ? 0.16 : 0.12);
+              + clamp01(surfaceGlowStrength) * (tile.userData.isDark ? 0.22 : 0.17);
           }
           if (tile.children[0]) tile.children[0].material.opacity = (fade * introState.p) * 0.4;
         });
@@ -2382,6 +2451,7 @@ const ChessTreadmill = ({ headerHeight }) => {
       }
 
       let targetSurfaceGlowOpacity = 0;
+      let targetHeaderOpacity = 0;
       if (selectedPieceForGlow && selectedPieceForGlow.userData.revealProgress > 0.08) {
         const selectedGlowPieces = interactionMode === 'space' && selectedGlowHeading
           ? interactivePieces.filter((piece) => (
@@ -2414,16 +2484,36 @@ const ChessTreadmill = ({ headerHeight }) => {
         selectedSurfaceGlow.position.copy(selectedSurfaceGlowPosition).add(selectedSurfaceGlowLift);
         selectedSurfaceGlow.rotation.copy(selectedSurfaceGlowEuler);
         selectedSurfaceGlow.scale.set(
-          glowPieceCount > 1 ? 1.12 : 0.9,
+          glowPieceCount > 1 ? 1.18 : 0.96,
           1,
-          glowPieceCount > 1 ? 1.12 : 0.9,
+          glowPieceCount > 1 ? 1.18 : 0.96,
         );
         selectedSurfaceGlowColor
           .copy(ownerSurfaceGlowColor)
           .lerp(riskSurfaceGlowColor, glowThemeMix);
         selectedSurfaceGlowMaterial.uniforms.uGlowColor.value.copy(selectedSurfaceGlowColor);
-        targetSurfaceGlowOpacity = glowReveal * THREE.MathUtils.lerp(0.3, 0.36, glowThemeMix);
+        targetSurfaceGlowOpacity = glowReveal * THREE.MathUtils.lerp(0.42, 0.5, glowThemeMix);
         selectedSurfaceGlow.visible = true;
+
+        const headerLabel = selectedGlowHeading || selectedPieceForGlow.userData.uiData?.pieceType || '';
+        if (headerLabel) {
+          drawSelectedHeaderTexture(headerLabel, glowThemeMix);
+          selectedHeaderEuler.set(glowAnchorTransform.rx, glowAnchorTransform.ry, glowAnchorTransform.rz);
+          selectedHeaderLift
+            .set(0, CHESS_ROAD_BOARD_THICKNESS * 0.5 + 0.1, 0)
+            .applyEuler(selectedHeaderEuler);
+          selectedHeaderOffset
+            .set(0, 0, CHESS_ROAD_TILE_SIZE * (glowPieceCount > 1 ? 1.54 : 1.42))
+            .applyEuler(selectedHeaderEuler);
+          selectedHeader.position
+            .copy(selectedSurfaceGlowPosition)
+            .add(selectedHeaderLift)
+            .add(selectedHeaderOffset);
+          selectedHeader.rotation.copy(selectedHeaderEuler);
+          selectedHeader.scale.setScalar(glowPieceCount > 1 ? 1 : 0.94);
+          selectedHeader.visible = true;
+          targetHeaderOpacity = glowReveal * 0.92;
+        }
       }
 
       selectedSurfaceGlowMaterial.uniforms.uOpacity.value += (
@@ -2431,6 +2521,11 @@ const ChessTreadmill = ({ headerHeight }) => {
       ) * 0.16;
       if (targetSurfaceGlowOpacity <= 0 && selectedSurfaceGlowMaterial.uniforms.uOpacity.value < 0.004) {
         selectedSurfaceGlow.visible = false;
+      }
+
+      selectedHeaderMaterial.opacity += (targetHeaderOpacity - selectedHeaderMaterial.opacity) * 0.18;
+      if (targetHeaderOpacity <= 0 && selectedHeaderMaterial.opacity < 0.01) {
+        selectedHeader.visible = false;
       }
 
       if (currentHoveredUUID !== null) {
@@ -2543,9 +2638,7 @@ const ChessTreadmill = ({ headerHeight }) => {
   const activePieceHeading = isRiskTheme ? pieceInfo.redHeading : pieceInfo.whiteHeading;
   const activePieceSub = isRiskTheme ? pieceInfo.redSub : pieceInfo.whiteSub;
   const showPawnDifferentialComparison = pieceInfo.comparisonType === 'pawnDifferential';
-  const activePieceImage = showPawnDifferentialComparison
-    ? ''
-    : (isRiskTheme ? pieceInfo.redImageSrc : pieceInfo.whiteImageSrc);
+  const activePieceImage = isRiskTheme ? pieceInfo.redImageSrc : pieceInfo.whiteImageSrc;
   const showPieceDetail = pieceInfo.active && Boolean(
     activePieceImage
     || activePieceHeading
