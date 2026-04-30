@@ -109,6 +109,7 @@ const QUEEN_PAWN_ROW_DEBUG = false;
 const QUEEN_PAWN_ROW_VALIDATION_INTERVAL_MS = 1000;
 const QUEEN_PAWN_ROW_COLUMN_OFFSET = 1;
 const QUEEN_PAWN_ROW_EXTRA_GAP = 0.65;
+const SELECTED_TEXT_TREADMILL_CENTER_OFFSET_Z = CHESS_ROAD_TILE_SIZE * 1.74;
 
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 const positiveModulo = (value, modulus) => ((value % modulus) + modulus) % modulus;
@@ -1172,15 +1173,15 @@ const ChessTreadmill = ({ headerHeight }) => {
     scene.add(selectedSurfaceGlow);
 
     const selectedHeaderCanvas = document.createElement('canvas');
-    selectedHeaderCanvas.width = 1024;
-    selectedHeaderCanvas.height = 192;
+    selectedHeaderCanvas.width = 1280;
+    selectedHeaderCanvas.height = 320;
     const selectedHeaderContext = selectedHeaderCanvas.getContext('2d');
     const selectedHeaderTexture = new THREE.CanvasTexture(selectedHeaderCanvas);
     selectedHeaderTexture.colorSpace = THREE.SRGBColorSpace;
     selectedHeaderTexture.anisotropy = 4;
     const selectedHeaderGeometry = new THREE.PlaneGeometry(
-      CHESS_ROAD_TILE_SIZE * 4.35,
-      CHESS_ROAD_TILE_SIZE * 0.72,
+      CHESS_ROAD_TILE_SIZE * 5.2,
+      CHESS_ROAD_TILE_SIZE * 1.18,
       1,
       1,
     );
@@ -1204,45 +1205,61 @@ const ChessTreadmill = ({ headerHeight }) => {
     const selectedHeaderLift = new THREE.Vector3();
     const selectedHeaderOffset = new THREE.Vector3();
     let selectedHeaderLabel = '';
+    let selectedHeaderSubLabel = '';
     let selectedHeaderThemeKey = '';
 
-    function drawSelectedHeaderTexture(label, themeMix) {
+    function drawSelectedHeaderTexture(label, subLabel, themeMix) {
       if (!selectedHeaderContext || !label) return;
 
       const nextLabel = label.toUpperCase();
+      const nextSubLabel = subLabel || '';
       const nextThemeKey = themeMix > 0.5 ? 'risk' : 'owner';
-      if (selectedHeaderLabel === nextLabel && selectedHeaderThemeKey === nextThemeKey) return;
+      if (
+        selectedHeaderLabel === nextLabel
+        && selectedHeaderSubLabel === nextSubLabel
+        && selectedHeaderThemeKey === nextThemeKey
+      ) return;
 
       selectedHeaderLabel = nextLabel;
+      selectedHeaderSubLabel = nextSubLabel;
       selectedHeaderThemeKey = nextThemeKey;
 
       const ctx = selectedHeaderContext;
       const accent = nextThemeKey === 'risk' ? '#FF5268' : '#F3F2EE';
+      const secondary = nextThemeKey === 'risk' ? 'rgba(255,196,203,0.86)' : 'rgba(232,243,255,0.84)';
       const glow = nextThemeKey === 'risk' ? 'rgba(255,82,104,0.46)' : 'rgba(207,231,255,0.46)';
       ctx.clearRect(0, 0, selectedHeaderCanvas.width, selectedHeaderCanvas.height);
 
       ctx.save();
-      ctx.fillStyle = 'rgba(7, 8, 12, 0.56)';
-      ctx.strokeStyle = nextThemeKey === 'risk' ? 'rgba(255,82,104,0.42)' : 'rgba(243,242,238,0.36)';
-      ctx.lineWidth = 4;
-      ctx.fillRect(40, 50, 944, 92);
-      ctx.strokeRect(40, 50, 944, 92);
+      ctx.fillStyle = 'rgba(7, 8, 12, 0.42)';
+      ctx.strokeStyle = nextThemeKey === 'risk' ? 'rgba(255,82,104,0.46)' : 'rgba(243,242,238,0.38)';
+      ctx.lineWidth = 5;
+      ctx.fillRect(72, 68, 1136, 162);
+      ctx.strokeRect(72, 68, 1136, 162);
 
       ctx.shadowColor = glow;
-      ctx.shadowBlur = 22;
+      ctx.shadowBlur = 24;
       ctx.fillStyle = accent;
-      ctx.font = '700 72px "Space Grotesk", Arial, sans-serif';
+      ctx.font = '700 88px "Space Grotesk", Arial, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.letterSpacing = '10px';
-      ctx.fillText(nextLabel, 512, 96, 880);
+      ctx.fillText(nextLabel, 640, nextSubLabel ? 128 : 150, 1000);
+
+      if (nextSubLabel) {
+        ctx.shadowBlur = 16;
+        ctx.fillStyle = secondary;
+        ctx.font = '500 40px "Space Grotesk", Arial, sans-serif';
+        ctx.letterSpacing = '4px';
+        ctx.fillText(nextSubLabel, 640, 190, 980);
+      }
 
       ctx.shadowBlur = 14;
       ctx.strokeStyle = nextThemeKey === 'risk' ? 'rgba(255,124,138,0.58)' : 'rgba(255,255,255,0.48)';
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.moveTo(118, 136);
-      ctx.lineTo(906, 136);
+      ctx.moveTo(164, 234);
+      ctx.lineTo(1116, 234);
       ctx.stroke();
       ctx.restore();
 
@@ -2495,22 +2512,36 @@ const ChessTreadmill = ({ headerHeight }) => {
         targetSurfaceGlowOpacity = glowReveal * THREE.MathUtils.lerp(0.42, 0.5, glowThemeMix);
         selectedSurfaceGlow.visible = true;
 
-        const headerLabel = selectedGlowHeading || selectedPieceForGlow.userData.uiData?.pieceType || '';
+        const selectedUiData = selectedPieceForGlow.userData.uiData;
+        const headerLabel = currentMode === 'risk'
+          ? selectedUiData?.redHeading
+          : selectedUiData?.whiteHeading;
+        const headerSubLabel = selectedUiData?.comparisonType === 'pawnDifferential'
+          ? (currentMode === 'risk' ? 'More sale pressure' : 'Less sale pressure')
+          : (currentMode === 'risk'
+              ? selectedUiData?.redSub
+              : selectedUiData?.whiteSub);
         if (headerLabel) {
-          drawSelectedHeaderTexture(headerLabel, glowThemeMix);
-          selectedHeaderEuler.set(glowAnchorTransform.rx, glowAnchorTransform.ry, glowAnchorTransform.rz);
+          const treadmillCenterTransform = getPathTransform(0, 0);
+          const headerThemeMix = currentMode === 'risk' ? 1 : 0;
+          drawSelectedHeaderTexture(headerLabel, headerSubLabel, headerThemeMix);
+          selectedHeaderEuler.set(
+            treadmillCenterTransform.rx,
+            treadmillCenterTransform.ry,
+            treadmillCenterTransform.rz,
+          );
           selectedHeaderLift
             .set(0, CHESS_ROAD_BOARD_THICKNESS * 0.5 + 0.1, 0)
             .applyEuler(selectedHeaderEuler);
           selectedHeaderOffset
-            .set(0, 0, CHESS_ROAD_TILE_SIZE * (glowPieceCount > 1 ? 1.54 : 1.42))
+            .set(0, 0, SELECTED_TEXT_TREADMILL_CENTER_OFFSET_Z)
             .applyEuler(selectedHeaderEuler);
           selectedHeader.position
-            .copy(selectedSurfaceGlowPosition)
+            .set(treadmillCenterTransform.x, treadmillCenterTransform.y, treadmillCenterTransform.z)
             .add(selectedHeaderLift)
             .add(selectedHeaderOffset);
           selectedHeader.rotation.copy(selectedHeaderEuler);
-          selectedHeader.scale.setScalar(glowPieceCount > 1 ? 1 : 0.94);
+          selectedHeader.scale.setScalar(1);
           selectedHeader.visible = true;
           targetHeaderOpacity = glowReveal * 0.92;
         }
@@ -2696,24 +2727,6 @@ const ChessTreadmill = ({ headerHeight }) => {
             showPieceDetail ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
           }`}
         >
-          <div className="absolute bottom-[7.25rem] left-7 max-w-[min(78vw,430px)] sm:left-12 sm:bottom-[8rem] md:left-20 md:bottom-[8.8rem] lg:left-24">
-            {activePieceHeading ? (
-              <h3
-                className="text-[1.45rem] font-bold uppercase tracking-[0.18em] leading-[1.05] drop-shadow-[0_10px_28px_rgba(0,0,0,0.38)] sm:text-[1.7rem] md:text-[2.35rem] lg:text-[2.55rem]"
-                style={{ color: isRiskTheme ? '#BB364F' : '#F3F2EE' }}
-              >
-                {activePieceHeading}
-              </h3>
-            ) : null}
-            {showPawnDifferentialComparison ? (
-              <PawnDifferentialComparison isRiskTheme={isRiskTheme} />
-            ) : activePieceSub ? (
-              <p className="mt-3 whitespace-pre-line text-[0.92rem] font-medium leading-[1.65] tracking-[0.03em] text-white/78 sm:text-[1rem] md:mt-4 md:text-[1.1rem]">
-                {activePieceSub}
-              </p>
-            ) : null}
-          </div>
-
           {activePieceImage ? (
             <img
               src={activePieceImage}
