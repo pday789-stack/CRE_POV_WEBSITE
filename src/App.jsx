@@ -1,7 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { TextGeometry } from 'three/examples/jsm/geometries/TextGeometry.js';
+import { FontLoader } from 'three/examples/jsm/loaders/FontLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import selectedTextBoldTypeface from 'three/examples/fonts/helvetiker_bold.typeface.json';
+import selectedTextRegularTypeface from 'three/examples/fonts/helvetiker_regular.typeface.json';
 
 import logoSvg from '../4.27 ASSETS/BRAND NEW LOGO.svg';
 import heroImage from '../4.27 ASSETS/BRAND NEW HERO.png';
@@ -109,12 +113,20 @@ const QUEEN_PAWN_ROW_DEBUG = false;
 const QUEEN_PAWN_ROW_VALIDATION_INTERVAL_MS = 1000;
 const QUEEN_PAWN_ROW_COLUMN_OFFSET = 1;
 const QUEEN_PAWN_ROW_EXTRA_GAP = 0.65;
-const SELECTED_TEXT_SIGN_WIDTH = CHESS_ROAD_TILE_SIZE * 5.2;
-const SELECTED_TEXT_SIGN_DEPTH = CHESS_ROAD_TILE_SIZE * 1.08;
-const SELECTED_TEXT_SIGN_FRONT_EDGE_Z = (CHESS_ROAD_WIDTH_TILES * CHESS_ROAD_TILE_SIZE) / 2;
-const SELECTED_TEXT_SIGN_FORWARD_OFFSET_Z = CHESS_ROAD_TILE_SIZE * 0.74;
-const SELECTED_TEXT_SIGN_UNDERBOARD_Y = -(CHESS_ROAD_BOARD_THICKNESS * 0.5 + 0.62);
-const SELECTED_TEXT_SIGN_SURFACE_LIFT_Y = 0.035;
+const SELECTED_TEXT_TREADMILL_FRONT_Z = (CHESS_ROAD_WIDTH_TILES * CHESS_ROAD_TILE_SIZE) / 2;
+const SELECTED_TEXT_HANG_FORWARD_OFFSET_Z = CHESS_ROAD_TILE_SIZE * 0.45;
+const SELECTED_TEXT_UNDERSIDE_GAP = 0.075;
+const SELECTED_TEXT_HEADER_SIZE = 0.82;
+const SELECTED_TEXT_SUBHEADER_SIZE = 0.32;
+const SELECTED_TEXT_HEADER_DEPTH = 0.12;
+const SELECTED_TEXT_SUBHEADER_DEPTH = 0.065;
+const SELECTED_TEXT_HEADER_BEVEL = 0.018;
+const SELECTED_TEXT_SUBHEADER_BEVEL = 0.009;
+const SELECTED_TEXT_LINE_GAP = 0.18;
+
+const selectedTextFontLoader = new FontLoader();
+const SELECTED_TEXT_HEADER_FONT = selectedTextFontLoader.parse(selectedTextBoldTypeface);
+const SELECTED_TEXT_SUBHEADER_FONT = selectedTextFontLoader.parse(selectedTextRegularTypeface);
 
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 const positiveModulo = (value, modulus) => ((value % modulus) + modulus) % modulus;
@@ -1177,31 +1189,35 @@ const ChessTreadmill = ({ headerHeight }) => {
     selectedSurfaceGlow.visible = false;
     scene.add(selectedSurfaceGlow);
 
-    const selectedHeaderCanvas = document.createElement('canvas');
-    selectedHeaderCanvas.width = 1280;
-    selectedHeaderCanvas.height = 320;
-    const selectedHeaderContext = selectedHeaderCanvas.getContext('2d');
-    const selectedHeaderTexture = new THREE.CanvasTexture(selectedHeaderCanvas);
-    selectedHeaderTexture.colorSpace = THREE.SRGBColorSpace;
-    selectedHeaderTexture.anisotropy = 4;
-    const selectedHeaderGeometry = new THREE.PlaneGeometry(
-      SELECTED_TEXT_SIGN_WIDTH,
-      SELECTED_TEXT_SIGN_DEPTH,
-      1,
-      1,
-    );
-    selectedHeaderGeometry.rotateX(-Math.PI / 2);
-    const selectedHeaderMaterial = new THREE.MeshBasicMaterial({
-      map: selectedHeaderTexture,
+    const selectedHeaderMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xf3f2ee,
+      emissive: 0xcfe7ff,
+      emissiveIntensity: 0.2,
+      roughness: 0.2,
+      metalness: 0.12,
+      clearcoat: 0.78,
+      clearcoatRoughness: 0.2,
       transparent: true,
       opacity: 0,
       depthWrite: false,
       depthTest: true,
-      blending: THREE.NormalBlending,
-      side: THREE.DoubleSide,
       toneMapped: false,
     });
-    const selectedHeader = new THREE.Mesh(selectedHeaderGeometry, selectedHeaderMaterial);
+    const selectedSubheaderMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xe8f3ff,
+      emissive: 0xaecfff,
+      emissiveIntensity: 0.13,
+      roughness: 0.24,
+      metalness: 0.08,
+      clearcoat: 0.62,
+      clearcoatRoughness: 0.26,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      depthTest: true,
+      toneMapped: false,
+    });
+    const selectedHeader = new THREE.Group();
     selectedHeader.name = 'selected_piece_scene_header';
     selectedHeader.renderOrder = 5;
     selectedHeader.visible = false;
@@ -1211,9 +1227,73 @@ const ChessTreadmill = ({ headerHeight }) => {
     let selectedHeaderLabel = '';
     let selectedHeaderSubLabel = '';
     let selectedHeaderThemeKey = '';
+    let selectedHeaderOpacity = 0;
 
-    function drawSelectedHeaderTexture(label, subLabel, themeMix) {
-      if (!selectedHeaderContext || !label) return;
+    function createSelectedTextMesh(text, {
+      font,
+      size,
+      depth,
+      bevelSize,
+      material,
+    }) {
+      const geometry = new TextGeometry(text, {
+        font,
+        size,
+        depth,
+        curveSegments: 8,
+        bevelEnabled: true,
+        bevelThickness: bevelSize,
+        bevelSize,
+        bevelSegments: 2,
+      });
+      geometry.computeBoundingBox();
+
+      const bounds = geometry.boundingBox;
+      const width = bounds ? bounds.max.x - bounds.min.x : 0;
+      const height = bounds ? bounds.max.y - bounds.min.y : size;
+      const centerX = bounds ? bounds.min.x + width * 0.5 : 0;
+      const topY = bounds ? bounds.max.y : 0;
+      const centerZ = bounds ? (bounds.min.z + bounds.max.z) * 0.5 : depth * 0.5;
+      geometry.translate(-centerX, -topY, -centerZ);
+      geometry.computeBoundingBox();
+      geometry.computeBoundingSphere();
+
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.renderOrder = 5;
+      mesh.castShadow = false;
+      mesh.receiveShadow = false;
+      return { mesh, height };
+    }
+
+    function clearSelectedHeaderText() {
+      while (selectedHeader.children.length > 0) {
+        const child = selectedHeader.children[0];
+        selectedHeader.remove(child);
+        if (child.geometry) child.geometry.dispose();
+      }
+    }
+
+    function applySelectedHeaderTheme(themeKey) {
+      if (themeKey === 'risk') {
+        selectedHeaderMaterial.color.set(0xff5268);
+        selectedHeaderMaterial.emissive.set(0xff263f);
+        selectedHeaderMaterial.emissiveIntensity = 0.23;
+        selectedSubheaderMaterial.color.set(0xffc4cb);
+        selectedSubheaderMaterial.emissive.set(0xff5268);
+        selectedSubheaderMaterial.emissiveIntensity = 0.16;
+        return;
+      }
+
+      selectedHeaderMaterial.color.set(0xf3f2ee);
+      selectedHeaderMaterial.emissive.set(0xcfe7ff);
+      selectedHeaderMaterial.emissiveIntensity = 0.2;
+      selectedSubheaderMaterial.color.set(0xe8f3ff);
+      selectedSubheaderMaterial.emissive.set(0xaecfff);
+      selectedSubheaderMaterial.emissiveIntensity = 0.13;
+    }
+
+    function syncSelectedHeaderText(label, subLabel, themeMix) {
+      if (!label) return;
 
       const nextLabel = label.toUpperCase();
       const nextSubLabel = subLabel || '';
@@ -1227,47 +1307,35 @@ const ChessTreadmill = ({ headerHeight }) => {
       selectedHeaderLabel = nextLabel;
       selectedHeaderSubLabel = nextSubLabel;
       selectedHeaderThemeKey = nextThemeKey;
+      applySelectedHeaderTheme(nextThemeKey);
+      clearSelectedHeaderText();
 
-      const ctx = selectedHeaderContext;
-      const accent = nextThemeKey === 'risk' ? '#FF5268' : '#F3F2EE';
-      const secondary = nextThemeKey === 'risk' ? 'rgba(255,196,203,0.86)' : 'rgba(232,243,255,0.84)';
-      const glow = nextThemeKey === 'risk' ? 'rgba(255,82,104,0.46)' : 'rgba(207,231,255,0.46)';
-      ctx.clearRect(0, 0, selectedHeaderCanvas.width, selectedHeaderCanvas.height);
-
-      ctx.save();
-      ctx.fillStyle = 'rgba(7, 8, 12, 0.42)';
-      ctx.strokeStyle = nextThemeKey === 'risk' ? 'rgba(255,82,104,0.46)' : 'rgba(243,242,238,0.38)';
-      ctx.lineWidth = 5;
-      ctx.fillRect(72, 68, 1136, 162);
-      ctx.strokeRect(72, 68, 1136, 162);
-
-      ctx.shadowColor = glow;
-      ctx.shadowBlur = 24;
-      ctx.fillStyle = accent;
-      ctx.font = '700 88px "Space Grotesk", Arial, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.letterSpacing = '10px';
-      ctx.fillText(nextLabel, 640, nextSubLabel ? 128 : 150, 1000);
+      const headerText = createSelectedTextMesh(nextLabel, {
+        font: SELECTED_TEXT_HEADER_FONT,
+        size: SELECTED_TEXT_HEADER_SIZE,
+        depth: SELECTED_TEXT_HEADER_DEPTH,
+        bevelSize: SELECTED_TEXT_HEADER_BEVEL,
+        material: selectedHeaderMaterial,
+      });
+      selectedHeader.add(headerText.mesh);
 
       if (nextSubLabel) {
-        ctx.shadowBlur = 16;
-        ctx.fillStyle = secondary;
-        ctx.font = '500 40px "Space Grotesk", Arial, sans-serif';
-        ctx.letterSpacing = '4px';
-        ctx.fillText(nextSubLabel, 640, 190, 980);
+        const subheaderText = createSelectedTextMesh(nextSubLabel, {
+          font: SELECTED_TEXT_SUBHEADER_FONT,
+          size: SELECTED_TEXT_SUBHEADER_SIZE,
+          depth: SELECTED_TEXT_SUBHEADER_DEPTH,
+          bevelSize: SELECTED_TEXT_SUBHEADER_BEVEL,
+          material: selectedSubheaderMaterial,
+        });
+        subheaderText.mesh.position.y = -(headerText.height + SELECTED_TEXT_LINE_GAP);
+        selectedHeader.add(subheaderText.mesh);
       }
+    }
 
-      ctx.shadowBlur = 14;
-      ctx.strokeStyle = nextThemeKey === 'risk' ? 'rgba(255,124,138,0.58)' : 'rgba(255,255,255,0.48)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(164, 234);
-      ctx.lineTo(1116, 234);
-      ctx.stroke();
-      ctx.restore();
-
-      selectedHeaderTexture.needsUpdate = true;
+    function setSelectedHeaderOpacity(opacity) {
+      selectedHeaderOpacity = opacity;
+      selectedHeaderMaterial.opacity = opacity;
+      selectedSubheaderMaterial.opacity = opacity * 0.86;
     }
 
     let lastInteractionCenteringTime = 0;
@@ -1330,8 +1398,8 @@ const ChessTreadmill = ({ headerHeight }) => {
       selectedHeaderLocalOffset
         .set(
           0,
-          SELECTED_TEXT_SIGN_UNDERBOARD_Y + SELECTED_TEXT_SIGN_SURFACE_LIFT_Y,
-          SELECTED_TEXT_SIGN_FRONT_EDGE_Z + SELECTED_TEXT_SIGN_FORWARD_OFFSET_Z,
+          -(CHESS_ROAD_BOARD_THICKNESS * 0.5 + SELECTED_TEXT_UNDERSIDE_GAP),
+          SELECTED_TEXT_TREADMILL_FRONT_Z + SELECTED_TEXT_HANG_FORWARD_OFFSET_Z,
         )
         .applyEuler(selectedHeaderEuler);
 
@@ -2553,7 +2621,7 @@ const ChessTreadmill = ({ headerHeight }) => {
         if (headerLabel) {
           const selectedHeaderTransform = getSelectedHeaderTransform();
           const headerThemeMix = currentMode === 'risk' ? 1 : 0;
-          drawSelectedHeaderTexture(headerLabel, headerSubLabel, headerThemeMix);
+          syncSelectedHeaderText(headerLabel, headerSubLabel, headerThemeMix);
           selectedHeaderEuler.set(
             selectedHeaderTransform.rx,
             selectedHeaderTransform.ry,
@@ -2578,8 +2646,8 @@ const ChessTreadmill = ({ headerHeight }) => {
         selectedSurfaceGlow.visible = false;
       }
 
-      selectedHeaderMaterial.opacity += (targetHeaderOpacity - selectedHeaderMaterial.opacity) * 0.18;
-      if (targetHeaderOpacity <= 0 && selectedHeaderMaterial.opacity < 0.01) {
+      setSelectedHeaderOpacity(selectedHeaderOpacity + (targetHeaderOpacity - selectedHeaderOpacity) * 0.18);
+      if (targetHeaderOpacity <= 0 && selectedHeaderOpacity < 0.01) {
         selectedHeader.visible = false;
       }
 
