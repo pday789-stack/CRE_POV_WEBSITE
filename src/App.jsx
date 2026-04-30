@@ -109,7 +109,12 @@ const QUEEN_PAWN_ROW_DEBUG = false;
 const QUEEN_PAWN_ROW_VALIDATION_INTERVAL_MS = 1000;
 const QUEEN_PAWN_ROW_COLUMN_OFFSET = 1;
 const QUEEN_PAWN_ROW_EXTRA_GAP = 0.65;
-const SELECTED_TEXT_TREADMILL_CENTER_OFFSET_Z = CHESS_ROAD_TILE_SIZE * 1.74;
+const SELECTED_TEXT_SIGN_WIDTH = CHESS_ROAD_TILE_SIZE * 5.2;
+const SELECTED_TEXT_SIGN_DEPTH = CHESS_ROAD_TILE_SIZE * 1.08;
+const SELECTED_TEXT_SIGN_FRONT_EDGE_Z = (CHESS_ROAD_WIDTH_TILES * CHESS_ROAD_TILE_SIZE) / 2;
+const SELECTED_TEXT_SIGN_FORWARD_OFFSET_Z = CHESS_ROAD_TILE_SIZE * 0.74;
+const SELECTED_TEXT_SIGN_UNDERBOARD_Y = -(CHESS_ROAD_BOARD_THICKNESS * 0.5 + 0.62);
+const SELECTED_TEXT_SIGN_SURFACE_LIFT_Y = 0.035;
 
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 const positiveModulo = (value, modulus) => ((value % modulus) + modulus) % modulus;
@@ -1180,8 +1185,8 @@ const ChessTreadmill = ({ headerHeight }) => {
     selectedHeaderTexture.colorSpace = THREE.SRGBColorSpace;
     selectedHeaderTexture.anisotropy = 4;
     const selectedHeaderGeometry = new THREE.PlaneGeometry(
-      CHESS_ROAD_TILE_SIZE * 5.2,
-      CHESS_ROAD_TILE_SIZE * 1.18,
+      SELECTED_TEXT_SIGN_WIDTH,
+      SELECTED_TEXT_SIGN_DEPTH,
       1,
       1,
     );
@@ -1202,8 +1207,7 @@ const ChessTreadmill = ({ headerHeight }) => {
     selectedHeader.visible = false;
     scene.add(selectedHeader);
     const selectedHeaderEuler = new THREE.Euler();
-    const selectedHeaderLift = new THREE.Vector3();
-    const selectedHeaderOffset = new THREE.Vector3();
+    const selectedHeaderLocalOffset = new THREE.Vector3();
     let selectedHeaderLabel = '';
     let selectedHeaderSubLabel = '';
     let selectedHeaderThemeKey = '';
@@ -1314,6 +1318,31 @@ const ChessTreadmill = ({ headerHeight }) => {
     function getBoardTransformForTileCoord(tileCoord, pathScroll) {
       const tilePosition = tileCoordToLogicalPosition(tileCoord.column, tileCoord.row);
       return getPathTransform(getTreadmillCurrentX(tilePosition.logicalX, pathScroll), tilePosition.logicalZ);
+    }
+
+    function getSelectedHeaderTransform() {
+      const treadmillCenterTransform = getPathTransform(0, 0);
+      selectedHeaderEuler.set(
+        treadmillCenterTransform.rx,
+        treadmillCenterTransform.ry,
+        treadmillCenterTransform.rz,
+      );
+      selectedHeaderLocalOffset
+        .set(
+          0,
+          SELECTED_TEXT_SIGN_UNDERBOARD_Y + SELECTED_TEXT_SIGN_SURFACE_LIFT_Y,
+          SELECTED_TEXT_SIGN_FRONT_EDGE_Z + SELECTED_TEXT_SIGN_FORWARD_OFFSET_Z,
+        )
+        .applyEuler(selectedHeaderEuler);
+
+      return {
+        x: treadmillCenterTransform.x + selectedHeaderLocalOffset.x,
+        y: treadmillCenterTransform.y + selectedHeaderLocalOffset.y,
+        z: treadmillCenterTransform.z + selectedHeaderLocalOffset.z,
+        rx: treadmillCenterTransform.rx,
+        ry: treadmillCenterTransform.ry,
+        rz: treadmillCenterTransform.rz,
+      };
     }
 
     function getUnifiedFade(currentX) {
@@ -2522,24 +2551,19 @@ const ChessTreadmill = ({ headerHeight }) => {
               ? selectedUiData?.redSub
               : selectedUiData?.whiteSub);
         if (headerLabel) {
-          const treadmillCenterTransform = getPathTransform(0, 0);
+          const selectedHeaderTransform = getSelectedHeaderTransform();
           const headerThemeMix = currentMode === 'risk' ? 1 : 0;
           drawSelectedHeaderTexture(headerLabel, headerSubLabel, headerThemeMix);
           selectedHeaderEuler.set(
-            treadmillCenterTransform.rx,
-            treadmillCenterTransform.ry,
-            treadmillCenterTransform.rz,
+            selectedHeaderTransform.rx,
+            selectedHeaderTransform.ry,
+            selectedHeaderTransform.rz,
           );
-          selectedHeaderLift
-            .set(0, CHESS_ROAD_BOARD_THICKNESS * 0.5 + 0.1, 0)
-            .applyEuler(selectedHeaderEuler);
-          selectedHeaderOffset
-            .set(0, 0, SELECTED_TEXT_TREADMILL_CENTER_OFFSET_Z)
-            .applyEuler(selectedHeaderEuler);
-          selectedHeader.position
-            .set(treadmillCenterTransform.x, treadmillCenterTransform.y, treadmillCenterTransform.z)
-            .add(selectedHeaderLift)
-            .add(selectedHeaderOffset);
+          selectedHeader.position.set(
+            selectedHeaderTransform.x,
+            selectedHeaderTransform.y,
+            selectedHeaderTransform.z,
+          );
           selectedHeader.rotation.copy(selectedHeaderEuler);
           selectedHeader.scale.setScalar(1);
           selectedHeader.visible = true;
