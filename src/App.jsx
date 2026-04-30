@@ -10,18 +10,18 @@ import comparisonWhitePawnSvg from '../4.27 ASSETS/WHITE PAWN.svg';
 import comparisonRedPawnSvg from '../4.27 ASSETS/RED PAWN.svg';
 import whiteChessPiecesGlb from '../CRE POV WEBSITE ASSETS/White_Chess_Pieces.glb';
 import redChessPiecesGlb from '../CRE POV WEBSITE ASSETS/Red_Chess_Pieces.glb';
-import puwWhiteKing from '../CRE POV WEBSITE ASSETS/PUW_WHITE_KING.svg';
-import puwWhiteQueen from '../CRE POV WEBSITE ASSETS/PUW_WHITE_QUEEN.svg';
-import puwWhiteBishop from '../CRE POV WEBSITE ASSETS/PUW_WHITE_BISHOP.svg';
-import puwWhiteKnight from '../CRE POV WEBSITE ASSETS/PUW_WHITE_KNIGHT.svg';
-import puwWhiteRook from '../CRE POV WEBSITE ASSETS/PUW_WHITE_ROOK.svg';
-import puwWhitePawn from '../CRE POV WEBSITE ASSETS/PUW_WHITE_PAWN.svg';
-import puwRedKing from '../CRE POV WEBSITE ASSETS/PUW_RED_KING.svg';
-import puwRedQueen from '../CRE POV WEBSITE ASSETS/PUW_RED_QUEEN.svg';
-import puwRedBishop from '../CRE POV WEBSITE ASSETS/PUW_RED_BISHOP.svg';
-import puwRedKnight from '../CRE POV WEBSITE ASSETS/PUW_RED_KNIGHT.svg';
-import puwRedRook from '../CRE POV WEBSITE ASSETS/PUW_RED_ROOK.svg';
-import puwRedPawn from '../CRE POV WEBSITE ASSETS/PUW_RED_PAWN.svg';
+import puwWhiteKing from '../Brand New PUW/PUW_WHITE_KING.svg';
+import puwWhiteQueen from '../Brand New PUW/PUW_WHITE_QUEEN.svg';
+import puwWhiteBishop from '../Brand New PUW/PUW_WHITE_BISHOP.svg';
+import puwWhiteKnight from '../Brand New PUW/PUW_WHITE_KNIGHT.svg';
+import puwWhiteRook from '../Brand New PUW/PUW_WHITE_ROOK.svg';
+import puwWhitePawn from '../Brand New PUW/PUW_WHITE_PAWN.svg';
+import puwRedKing from '../Brand New PUW/PUW_RED_KING.svg';
+import puwRedQueen from '../Brand New PUW/PUW_RED_QUEEN.svg';
+import puwRedBishop from '../Brand New PUW/PUW_RED_BISHOP.svg';
+import puwRedKnight from '../Brand New PUW/PUW_RED_KNIGHT.svg';
+import puwRedRook from '../Brand New PUW/PUW_RED_ROOK.svg';
+import puwRedPawn from '../Brand New PUW/PUW_RED_PAWN.svg';
 
 const PIECE_NODE_NAMES = {
   owner: {
@@ -65,12 +65,12 @@ const PIECE_MATERIAL_PROFILES = {
     lineColor: '#F4FAFF',
     coreOpacity: 0.78,
     rimOpacity: 0.7,
-    lineOpacity: 0.62,
+    lineOpacity: 0.18,
     rimStrength: 1.74,
-    lineStrength: 1.42,
-    verticalStrength: 0.46,
-    ringDensity: 4.35,
-    verticalDensity: 22,
+    lineStrength: 0.52,
+    verticalStrength: 0.06,
+    ringDensity: 2.15,
+    verticalDensity: 5.5,
   },
   risk: {
     color: '#97182E',
@@ -79,12 +79,12 @@ const PIECE_MATERIAL_PROFILES = {
     lineColor: '#FF5268',
     coreOpacity: 0.76,
     rimOpacity: 0.72,
-    lineOpacity: 0.64,
+    lineOpacity: 0.2,
     rimStrength: 1.78,
-    lineStrength: 1.46,
-    verticalStrength: 0.5,
-    ringDensity: 4.35,
-    verticalDensity: 22,
+    lineStrength: 0.56,
+    verticalStrength: 0.07,
+    ringDensity: 2.15,
+    verticalDensity: 5.5,
   },
 };
 
@@ -108,6 +108,7 @@ const IS_DEVELOPMENT = import.meta.env.DEV;
 const QUEEN_PAWN_ROW_DEBUG = false;
 const QUEEN_PAWN_ROW_VALIDATION_INTERVAL_MS = 1000;
 const QUEEN_PAWN_ROW_COLUMN_OFFSET = 1;
+const QUEEN_PAWN_ROW_EXTRA_GAP = 0.65;
 
 const clamp01 = (value) => Math.min(1, Math.max(0, value));
 const positiveModulo = (value, modulus) => ((value % modulus) + modulus) % modulus;
@@ -161,14 +162,14 @@ const HOLOGRAPHIC_SHADER_UTILS = `
   }
 
   float hologramRings(vec3 piecePosition, float ringDensity) {
-    return lineFromCoord(piecePosition.y * ringDensity, 0.013, 0.02);
+    return lineFromCoord(piecePosition.y * ringDensity, 0.008, 0.035);
   }
 
   float hologramVerticals(vec3 piecePosition, float verticalDensity) {
     float radius = length(piecePosition.xz);
     float angular = (atan(piecePosition.z, piecePosition.x) + 3.14159265) / 6.2831853;
-    float verticalLine = lineFromCoord(angular * verticalDensity, 0.012, 0.022);
-    return verticalLine * smoothstep(0.18, 0.7, radius);
+    float verticalLine = lineFromCoord(angular * verticalDensity, 0.006, 0.045);
+    return verticalLine * smoothstep(0.28, 0.88, radius);
   }
 `;
 
@@ -198,7 +199,7 @@ const HOLOGRAPHIC_CORE_FRAGMENT_SHADER = `
     float surface = pow(clamp(facing, 0.0, 1.0), 0.78);
     float rings = hologramRings(vPiecePosition, uRingDensity);
     float verticals = hologramVerticals(vPiecePosition, uVerticalDensity) * uVerticalStrength;
-    float lineMask = max(rings * 0.78, verticals * 0.58);
+    float lineMask = max(rings * 0.22, verticals * 0.05);
 
     float frostedBody = pow(surface, 0.48);
     float innerBody = smoothstep(0.08, 0.72, facing);
@@ -208,12 +209,12 @@ const HOLOGRAPHIC_CORE_FRAGMENT_SHADER = `
     finalColor += uFillColor * frostedBody * (0.11 + innerBody * 0.08);
     finalColor += uRimColor * rim * uRimStrength * 0.9;
     finalColor += uRimColor * fresnel * uRimStrength * 0.34;
-    finalColor += uLineColor * lineMask * uLineStrength * (0.64 + rim * 0.3 + surfaceSheen * 0.12);
+    finalColor += uLineColor * lineMask * uLineStrength * (0.28 + rim * 0.14 + surfaceSheen * 0.08);
 
     float alpha = uOpacity * (0.68 + surface * 0.24);
     alpha += innerBody * uOpacity * 0.08;
     alpha += rim * uOpacity * uRimStrength * 0.34;
-    alpha += lineMask * uOpacity * uLineStrength * 0.18;
+    alpha += lineMask * uOpacity * uLineStrength * 0.035;
 
     if (alpha < 0.01) discard;
     gl_FragColor = vec4(finalColor, clamp(alpha, 0.0, 0.94));
@@ -259,12 +260,12 @@ const HOLOGRAPHIC_LINE_FRAGMENT_SHADER = `
     float fresnel = pow(1.0 - clamp(facing, 0.0, 1.0), 1.65);
     float rings = hologramRings(vPiecePosition, uRingDensity);
     float verticals = hologramVerticals(vPiecePosition, uVerticalDensity) * uVerticalStrength;
-    float lineMask = max(rings, verticals);
-    lineMask *= 0.9 + fresnel * 0.82;
+    float lineMask = rings * 0.38 + verticals * 0.08;
+    lineMask *= 0.26 + fresnel * 0.34;
 
     float alpha = lineMask * uOpacity * uLineStrength;
     if (alpha < 0.004) discard;
-    gl_FragColor = vec4(uLineColor * (0.95 + fresnel * 0.78), clamp(alpha, 0.0, 0.74));
+    gl_FragColor = vec4(uLineColor * (0.82 + fresnel * 0.42), clamp(alpha, 0.0, 0.22));
   }
 `;
 
@@ -671,8 +672,8 @@ const PawnComparisonIcon = ({ src, label }) => (
 
 const PawnDifferentialComparison = ({ isRiskTheme }) => {
   const selectedPawnState = isRiskTheme
-    ? { copy: 'RED: More sale pressure', operator: '<' }
-    : { copy: 'WHITE: Less sale pressure', operator: '>' };
+    ? { copy: 'More sale pressure', operator: '<' }
+    : { copy: 'Less sale pressure', operator: '>' };
 
   return (
     <div className="mt-4 grid gap-2.5 text-white/88 sm:mt-5">
@@ -1513,6 +1514,8 @@ const ChessTreadmill = ({ headerHeight }) => {
     const queenPawnRowOffsets = [-1, 0, 1];
     const pieceAnchorEuler = new THREE.Euler();
     const pieceAnchorOffsetVector = new THREE.Vector3();
+    const piecePositionOffsetEuler = new THREE.Euler();
+    const piecePositionOffsetVector = new THREE.Vector3();
 
     function createQueenPawnRowDebugMarkers(sequence) {
       if (!IS_DEVELOPMENT || !QUEEN_PAWN_ROW_DEBUG) return [];
@@ -1552,7 +1555,8 @@ const ChessTreadmill = ({ headerHeight }) => {
       const pawnBoardCoords = queenPawnRowOffsets.map((rowOffset) => (
         makeTileCoord(pawnColumn, queenBoardCoord.row + rowOffset)
       ));
-      const pawnNavigationLogicalX = tileCoordToLogicalPosition(pawnColumn, queenBoardCoord.row).logicalX;
+      const pawnNavigationLogicalX = tileCoordToLogicalPosition(pawnColumn, queenBoardCoord.row).logicalX
+        + QUEEN_PAWN_ROW_EXTRA_GAP;
       const queenPiece = placePiece('queen', queenUiData, {
         boardCoord: queenBoardCoord,
         formationId: sequenceId,
@@ -1564,6 +1568,7 @@ const ChessTreadmill = ({ headerHeight }) => {
         formationId: sequenceId,
         formationRole: `pawn-row-${index + 1}`,
         navigationLogicalX: pawnNavigationLogicalX,
+        positionOffset: [QUEEN_PAWN_ROW_EXTRA_GAP, 0, 0],
         supportTileCoords: [pawnBoardCoord],
       }));
 
@@ -1619,7 +1624,7 @@ const ChessTreadmill = ({ headerHeight }) => {
           tileDelta.row * CHESS_ROAD_TILE_SIZE,
         ).applyEuler(pieceAnchorEuler);
 
-        return {
+        const transform = {
           x: anchorTransform.x + pieceAnchorOffsetVector.x,
           y: anchorTransform.y + pieceAnchorOffsetVector.y,
           z: anchorTransform.z + pieceAnchorOffsetVector.z,
@@ -1627,9 +1632,27 @@ const ChessTreadmill = ({ headerHeight }) => {
           ry: anchorTransform.ry,
           rz: anchorTransform.rz,
         };
+
+        if (piece.userData.positionOffset) {
+          piecePositionOffsetEuler.set(transform.rx, transform.ry, transform.rz);
+          piecePositionOffsetVector.copy(piece.userData.positionOffset).applyEuler(piecePositionOffsetEuler);
+          transform.x += piecePositionOffsetVector.x;
+          transform.y += piecePositionOffsetVector.y;
+          transform.z += piecePositionOffsetVector.z;
+        }
+
+        return transform;
       }
 
-      return getPathTransform(getTreadmillCurrentX(piece.userData.logicalX, pathScroll), piece.userData.logicalZ);
+      const transform = getPathTransform(getTreadmillCurrentX(piece.userData.logicalX, pathScroll), piece.userData.logicalZ);
+      if (piece.userData.positionOffset) {
+        piecePositionOffsetEuler.set(transform.rx, transform.ry, transform.rz);
+        piecePositionOffsetVector.copy(piece.userData.positionOffset).applyEuler(piecePositionOffsetEuler);
+        transform.x += piecePositionOffsetVector.x;
+        transform.y += piecePositionOffsetVector.y;
+        transform.z += piecePositionOffsetVector.z;
+      }
+      return transform;
     }
 
     function getPieceSupportReveal(piece, pathScroll) {
@@ -2022,8 +2045,6 @@ const ChessTreadmill = ({ headerHeight }) => {
         console.error('Failed to load chess piece GLBs.', error);
       });
 
-    const pieceOffsetEuler = new THREE.Euler();
-    const pieceOffsetVector = new THREE.Vector3();
     const targetScaleVector = new THREE.Vector3(1, 1, 1);
     function getPieceRenderMeshes(piece) {
       if (piece.userData.renderMeshes?.length) return piece.userData.renderMeshes;
@@ -2337,11 +2358,6 @@ const ChessTreadmill = ({ headerHeight }) => {
 
         piece.position.set(transform.x, transform.y + PIECE_BASE_LIFT + bobbing + selectionLift, transform.z);
         piece.rotation.set(transform.rx, transform.ry, transform.rz);
-        if (piece.userData.positionOffset) {
-          pieceOffsetEuler.set(transform.rx, transform.ry, transform.rz);
-          pieceOffsetVector.copy(piece.userData.positionOffset).applyEuler(pieceOffsetEuler);
-          piece.position.add(pieceOffsetVector);
-        }
         piece.visible = pieceReveal > 0.005;
         piece.userData.themeMix += (piece.userData.targetThemeMix - piece.userData.themeMix) * 0.08;
 
@@ -2609,7 +2625,7 @@ const ChessTreadmill = ({ headerHeight }) => {
             <img
               src={activePieceImage}
               alt={activePieceHeading || 'Focused chess piece'}
-              className="absolute right-7 top-[6.25rem] h-auto w-[150px] object-contain drop-shadow-[0_22px_44px_rgba(0,0,0,0.44)] transition-all duration-500 ease-out sm:right-12 sm:top-[7rem] sm:w-[190px] md:right-24 md:top-[8rem] md:w-[285px] lg:right-28 lg:top-[8.8rem] lg:w-[330px]"
+              className="absolute right-7 top-[6.25rem] h-auto w-[150px] object-contain drop-shadow-[0_22px_44px_rgba(0,0,0,0.44)] transition-all duration-500 ease-out sm:right-12 sm:top-[6.5rem] sm:w-[190px] md:right-24 md:top-[4.75rem] md:w-[285px] lg:right-28 lg:top-[4.75rem] lg:w-[330px]"
             />
           ) : null}
         </div>
